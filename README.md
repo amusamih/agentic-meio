@@ -34,6 +34,8 @@ The repository currently supports three main validation lanes.
 
 These lanes are not all directly comparable. In particular, public-benchmark reward is not the same objective as Stockpyl total cost, and the real-demand lane reuses the Stockpyl cost backbone while replacing the observations with externally grounded demand and lead-time data.
 
+The tracked codebase also retains additional experimental engineering utilities, including a semi-synthetic external-evidence branch and related analysis helpers. Those components are kept for completeness and reproducibility of the implementation surface, but they are not part of the main public validation claim summarized in this README.
+
 ## Repository Layout
 
 - `src/meio/`: core packages for agents, tools, simulation, optimization, evaluation, benchmark adapters, and backtesting
@@ -41,6 +43,7 @@ These lanes are not all directly comparable. In particular, public-benchmark rew
 - `scripts/`: entry points for validated runs and result analysis
 - `tests/`: unit tests for contracts, runtimes, adapters, evaluation, and export logic
 - `third_party/ReplenishmentEnv/`: pinned local benchmark dependency for the public-benchmark lane
+- `results/`: local artifact output directory; only a placeholder is tracked in Git
 
 Generated experiment artifacts are written to `results/` during local runs.
 
@@ -101,5 +104,6 @@ python scripts/analyze_validation_stack.py
 ## Reproducibility Notes
 
 - Configs are explicit and versioned under `configs/`.
-- Saved run directories include manifests, metadata, aggregate summaries, and trace files for audit.
+- Saved run directories include manifests, metadata, aggregate summaries, and trace files for audit when experiments are run locally.
+- Frozen result artifacts are not committed to this public repository by default; `results/` is kept as a local output location.
 - The public benchmark lane uses a pinned local third-party dependency to avoid the broken upstream packaging path encountered during validation.
