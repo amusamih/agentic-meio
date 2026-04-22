@@ -1,0 +1,23 @@
+[experiment]
+name = "stockpyl_serial_multi_eval"
+benchmark_config = "configs/benchmark/serial_3_echelon.toml"
+agent_config = "configs/agent/live_llm.toml"
+episode_count = 2
+seed_set = [20260417, 20260418]
+results_dir = "results/stockpyl_serial_multi_eval"
+
+[[regime_schedules]]
+name = "shift_recovery"
+labels = ["normal", "demand_regime_shift", "recovery"]
+
+[[regime_schedules]]
+name = "sustained_shift"
+labels = ["normal", "demand_regime_shift", "demand_regime_shift"]
+
+[[regime_schedules]]
+name = "recovery_false_alarm"
+labels = ["normal", "recovery", "normal"]
+
+[[regime_schedules]]
+name = "long_shift_recovery"
+labels = ["normal", "demand_regime_shift", "demand_regime_shift", "recovery"]

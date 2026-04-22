@@ -1,0 +1,20 @@
+[experiment]
+name = "public_benchmark_eval"
+benchmark_candidate = "replenishment_env"
+discovery_module = "ReplenishmentEnv"
+benchmark_root = "third_party/ReplenishmentEnv"
+demo_config_path = "config/demo.yml"
+agent_config = "configs/agent/base.toml"
+environment_config_name = "sku50.single_store.standard"
+wrapper_names = ["HistoryWrapper"]
+benchmark_mode = "test"
+smoke_horizon_steps = 1
+mode_set = [
+    "deterministic_baseline",
+    "deterministic_orchestrator",
+    "llm_orchestrator",
+]
+episode_horizon_steps = 10
+base_stock_multiplier = 1.0
+demand_scale_epsilon = 1e-6
+results_dir = "results/public_benchmark_eval"

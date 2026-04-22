@@ -1,0 +1,53 @@
+[experiment]
+name = "real_demand_backtest_panel"
+benchmark_config = "configs/benchmark/serial_3_echelon.toml"
+agent_config = "configs/agent/base.toml"
+discovery_module = "ReplenishmentEnv"
+mode_set = [
+  "deterministic_baseline",
+  "deterministic_orchestrator",
+  "llm_orchestrator",
+]
+results_dir = "results/real_demand_backtest"
+
+[[slices]]
+name = "store1_low_2018q4"
+dataset_name = "replenishmentenv_sku2778_store1"
+demand_csv_path = "data/sku2778/sku2778.demand.csv"
+leadtime_csv_path = "data/sku2778/sku2778.store1.dynamic_vlt.csv"
+sku_list_path = "data/sku2778/sku100.sku_list.csv"
+selected_skus = ["SKU48", "SKU44", "SKU15", "SKU59", "SKU42"]
+subset_selection = "explicit_selected_skus"
+training_window_days = 180
+history_window_days = 28
+forecast_update_window_days = 1
+evaluation_horizon_days = 30
+evaluation_start_date = "2018/12/28"
+
+[[slices]]
+name = "store2_mid_2019q1"
+dataset_name = "replenishmentenv_sku2778_store2"
+demand_csv_path = "data/sku2778/sku2778.demand.csv"
+leadtime_csv_path = "data/sku2778/sku2778.store2.dynamic_vlt.csv"
+sku_list_path = "data/sku2778/sku100.sku_list.csv"
+selected_skus = ["SKU27", "SKU47", "SKU54", "SKU31", "SKU24"]
+subset_selection = "explicit_selected_skus"
+training_window_days = 180
+history_window_days = 28
+forecast_update_window_days = 1
+evaluation_horizon_days = 30
+evaluation_start_date = "2019/2/26"
+
+[[slices]]
+name = "store3_midhigh_2019q2"
+dataset_name = "replenishmentenv_sku2778_store3"
+demand_csv_path = "data/sku2778/sku2778.demand.csv"
+leadtime_csv_path = "data/sku2778/sku2778.store3.dynamic_vlt.csv"
+sku_list_path = "data/sku2778/sku100.sku_list.csv"
+selected_skus = ["SKU18", "SKU26", "SKU34", "SKU53", "SKU70"]
+subset_selection = "explicit_selected_skus"
+training_window_days = 180
+history_window_days = 28
+forecast_update_window_days = 1
+evaluation_horizon_days = 30
+evaluation_start_date = "2019/4/27"

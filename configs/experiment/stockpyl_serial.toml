@@ -1,0 +1,8 @@
+[experiment]
+name = "stockpyl_serial_primary_path"
+benchmark_config = "configs/benchmark/serial_3_echelon.toml"
+agent_config = "configs/agent/base.toml"
+episode_count = 1
+rollout_horizon = 3
+regime_schedule = ["normal", "demand_regime_shift", "recovery"]
+results_dir = "results/stockpyl_serial"

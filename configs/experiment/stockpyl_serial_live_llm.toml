@@ -1,0 +1,8 @@
+[experiment]
+name = "stockpyl_serial_live_llm_eval"
+benchmark_config = "configs/benchmark/serial_3_echelon.toml"
+agent_config = "configs/agent/live_llm.toml"
+episode_count = 2
+rollout_horizon = 3
+regime_schedule = ["normal", "demand_regime_shift", "recovery"]
+results_dir = "results/stockpyl_serial_live_llm"

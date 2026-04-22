@@ -1,0 +1,45 @@
+# Keep all repo docs local; only the root README is intended for public sharing.
+docs/
+Manuscript/
+AGENTS.md
+.venv/
+.env
+.env.*
+.tmp*/
+tmp*/
+*.tmp
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+results/*
+!results/.gitkeep
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+
+# Internal paper-packaging helpers that are not intended for the public repo surface.
+scripts/export_paper_packaging.py
+scripts/list_paper_eligible_runs.py
+scripts/analyze_paper_candidate_failures.py
+tests/unit/test_paper_exports.py
+tests/unit/test_results_governance.py
+
+# Internal-only external-evidence branch helpers and configs kept out of the public repo.
+configs/experiment/stockpyl_serial_external_evidence.toml
+scripts/analyze_external_evidence_failures.py
+scripts/analyze_external_evidence_repeatability.py
+scripts/analyze_external_evidence_results.py
+scripts/inspect_external_evidence.py
+tests/unit/test_external_evidence_analysis.py
+tests/unit/test_external_evidence_branch.py
+tests/unit/test_external_evidence_failure_analysis.py
+tests/unit/test_external_evidence_inspection.py
+tests/unit/test_external_evidence_repeatability.py

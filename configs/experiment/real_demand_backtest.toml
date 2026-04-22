@@ -1,0 +1,22 @@
+[experiment]
+name = "real_demand_backtest"
+benchmark_config = "configs/benchmark/serial_3_echelon.toml"
+agent_config = "configs/agent/base.toml"
+dataset_name = "replenishmentenv_sku2778_store2"
+discovery_module = "ReplenishmentEnv"
+demand_csv_path = "data/sku2778/sku2778.demand.csv"
+leadtime_csv_path = "data/sku2778/sku2778.store2.dynamic_vlt.csv"
+sku_list_path = "data/sku2778/sku50.sku_list.csv"
+selected_sku_count = 5
+subset_selection = "nearest_benchmark_mean"
+training_window_days = 180
+history_window_days = 28
+forecast_update_window_days = 1
+evaluation_horizon_days = 30
+roll_forward_stride_days = 1
+mode_set = [
+  "deterministic_baseline",
+  "deterministic_orchestrator",
+  "llm_orchestrator",
+]
+results_dir = "results/real_demand_backtest"

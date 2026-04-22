@@ -1,0 +1,13 @@
+[qualification]
+candidate = "or_gym_inventory"
+topology_fit = "medium"
+regime_shift_fit = "medium"
+optimizer_boundary_fit = "medium"
+event_trigger_compatibility = "medium"
+implementation_effort = "high"
+expected_paper_value = "medium"
+rationale = "Plausible secondary candidate, but the current repo fit is weaker than the canonical serial path."
+notes = [
+    "Living repo-fit judgment only.",
+    "Do not prioritize until the kept serial candidate is integrated cleanly.",
+]

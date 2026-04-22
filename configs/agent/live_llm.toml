@@ -1,0 +1,30 @@
+[agent]
+enabled_regime_labels = [
+    "normal",
+    "demand_regime_shift",
+    "supply_disruption",
+    "joint_disruption",
+    "recovery",
+]
+allowed_update_types = [
+    "keep_current",
+    "reweight_scenarios",
+    "switch_demand_regime",
+    "switch_leadtime_regime",
+    "widen_uncertainty",
+]
+allowed_tool_classes = [
+    "deterministic_statistical",
+    "learned_non_llm",
+    "llm_backed",
+]
+minimum_confidence = 0.6
+max_tool_steps = 3
+allow_replan_requests = true
+allow_abstain = true
+llm_provider = "openai"
+llm_client_mode = "real"
+llm_model_name = "gpt-4o-mini"
+llm_temperature = 0.0
+llm_request_timeout_s = 20.0
+llm_max_retries = 1

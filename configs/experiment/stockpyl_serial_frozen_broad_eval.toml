@@ -1,0 +1,57 @@
+[experiment]
+name = "stockpyl_serial_frozen_broad_eval"
+benchmark_config = "configs/benchmark/serial_3_echelon.toml"
+agent_config = "configs/agent/live_llm.toml"
+episode_count = 3
+seed_set = [20260417, 20260418, 20260419]
+mode_set = [
+    "deterministic_baseline",
+    "deterministic_orchestrator",
+    "llm_orchestrator",
+]
+tool_ablation_variants = ["full"]
+results_dir = "results/stockpyl_serial_frozen_broad_eval"
+
+[[regime_schedules]]
+name = "shift_recovery"
+labels = ["normal", "demand_regime_shift", "recovery"]
+
+[[regime_schedules]]
+name = "sustained_shift"
+labels = ["normal", "demand_regime_shift", "demand_regime_shift"]
+
+[[regime_schedules]]
+name = "recovery_false_alarm"
+labels = ["normal", "recovery", "normal"]
+
+[[regime_schedules]]
+name = "long_shift_recovery"
+labels = ["normal", "demand_regime_shift", "demand_regime_shift", "recovery"]
+
+[[regime_schedules]]
+name = "delayed_shift_recovery"
+labels = ["normal", "normal", "demand_regime_shift", "recovery"]
+
+[[regime_schedules]]
+name = "delayed_sustained_shift"
+labels = ["normal", "normal", "demand_regime_shift", "demand_regime_shift"]
+
+[[regime_schedules]]
+name = "false_alarm_then_real_shift"
+labels = ["normal", "recovery", "demand_regime_shift", "demand_regime_shift"]
+
+[[regime_schedules]]
+name = "double_shift_with_gap"
+labels = ["normal", "demand_regime_shift", "normal", "demand_regime_shift"]
+
+[[regime_schedules]]
+name = "recovery_then_relapse"
+labels = ["normal", "demand_regime_shift", "recovery", "demand_regime_shift"]
+
+[[regime_schedules]]
+name = "delayed_long_shift_recovery"
+labels = ["normal", "normal", "demand_regime_shift", "demand_regime_shift", "recovery"]
+
+[[regime_schedules]]
+name = "false_alarm_then_shift_recovery"
+labels = ["normal", "recovery", "demand_regime_shift", "recovery"]

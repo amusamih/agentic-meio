@@ -1,0 +1,13 @@
+[qualification]
+candidate = "mabim"
+topology_fit = "unverified"
+regime_shift_fit = "unverified"
+optimizer_boundary_fit = "unverified"
+event_trigger_compatibility = "unverified"
+implementation_effort = "high"
+expected_paper_value = "low"
+rationale = "Current repo scope does not justify first-wave integration until fit to the paper path is demonstrated."
+notes = [
+    "Living repo-fit judgment only.",
+    "Revisit only if scope fit becomes clearer after the first benchmark integration.",
+]

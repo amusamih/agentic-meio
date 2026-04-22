@@ -1,0 +1,13 @@
+[qualification]
+candidate = "stockpyl_serial"
+topology_fit = "high"
+regime_shift_fit = "medium"
+optimizer_boundary_fit = "high"
+event_trigger_compatibility = "medium"
+implementation_effort = "medium"
+expected_paper_value = "high"
+rationale = "Closest current fit to the canonical serial multi-echelon paper path."
+notes = [
+    "Living repo-fit judgment only.",
+    "Requires a typed wrapper before deeper benchmark execution.",
+]

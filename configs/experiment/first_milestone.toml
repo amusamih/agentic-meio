@@ -1,0 +1,6 @@
+[experiment]
+name = "first_milestone_serial_3_echelon"
+benchmark_config = "configs/benchmark/serial_3_echelon.toml"
+agent_config = "configs/agent/base.toml"
+episode_count = 5
+results_dir = "results/first_milestone"
