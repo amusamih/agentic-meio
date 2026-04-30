@@ -126,35 +126,6 @@ def test_step_trace_record_construction_preserves_typed_period_fields() -> None:
         optimizer_output_changed_state=True,
         intervention_changed_outcome=True,
         calibration_reason="repeated_stress_not_materially_worsening",
-        external_evidence_fusion_cap_applied=True,
-        external_evidence_role_labels=("leading_demand_shift",),
-        external_evidence_corroboration_count=2,
-        corroboration_gate_applied=True,
-        corroborated_family_change_allowed=False,
-        proposed_external_strengthening={
-            "demand_outlook": 15.45,
-            "leadtime_outlook": 2.5,
-            "safety_buffer_scale": 1.133,
-        },
-        final_external_strengthening={
-            "demand_outlook": 15.0,
-            "leadtime_outlook": 2.5,
-            "safety_buffer_scale": 1.1,
-        },
-        external_evidence_fusion_cap_reason=(
-            "confirming_external_evidence_with_sufficient_internal_signal"
-        ),
-        corroboration_gate_reason="uncorroborated_leading_external_evidence",
-        early_evidence_confirmation_gate_applied=True,
-        early_evidence_family_change_blocked=True,
-        proposed_external_update_requests=(
-            "switch_demand_regime",
-            "widen_uncertainty",
-        ),
-        final_external_update_requests=("keep_current",),
-        early_evidence_confirmation_gate_reason=(
-            "leading_external_evidence_before_internal_stress"
-        ),
     )
 
     assert record.selected_tools[-1] == "scenario_tool"
@@ -167,20 +138,6 @@ def test_step_trace_record_construction_preserves_typed_period_fields() -> None:
     assert record.unavailable_tool_request is False
     assert record.sequencing_blocked_tool_request_count == 0
     assert record.clean_intervention is False
-    assert record.external_evidence_fusion_cap_applied is True
-    assert record.external_evidence_role_labels == ("leading_demand_shift",)
-    assert record.external_evidence_corroboration_count == 2
-    assert record.corroboration_gate_applied is True
-    assert record.corroborated_family_change_allowed is False
-    assert record.proposed_external_strengthening is not None
-    assert record.final_external_strengthening is not None
-    assert record.early_evidence_confirmation_gate_applied is True
-    assert record.early_evidence_family_change_blocked is True
-    assert record.proposed_external_update_requests == (
-        "switch_demand_regime",
-        "widen_uncertainty",
-    )
-    assert record.final_external_update_requests == ("keep_current",)
 
 
 def test_episode_summary_and_trace_records_capture_logging_fields() -> None:
@@ -237,13 +194,6 @@ def test_episode_summary_and_trace_records_capture_logging_fields() -> None:
         unresolved_stress_moderation_count=2,
         moderated_update_count=3,
         hysteresis_application_count=3,
-        evidence_fusion_cap_count=2,
-        capped_external_strengthening_count=2,
-        early_evidence_confirmation_gate_count=1,
-        early_evidence_family_change_block_count=1,
-        corroboration_gate_count=1,
-        corroborated_family_change_count=2,
-        role_level_usage_counts=(("leading_demand_shift", 2),),
     )
     llm_trace = LLMCallTraceRecord(
         episode_id="episode_1",
@@ -308,13 +258,6 @@ def test_episode_summary_and_trace_records_capture_logging_fields() -> None:
     assert episode.relapse_moderation_count == 2
     assert episode.unresolved_stress_moderation_count == 2
     assert episode.hysteresis_application_count == 3
-    assert episode.evidence_fusion_cap_count == 2
-    assert episode.capped_external_strengthening_count == 2
-    assert episode.early_evidence_confirmation_gate_count == 1
-    assert episode.early_evidence_family_change_block_count == 1
-    assert episode.corroboration_gate_count == 1
-    assert episode.corroborated_family_change_count == 2
-    assert episode.role_level_usage_counts == (("leading_demand_shift", 2),)
     assert llm_trace.total_tokens == 144
     assert llm_trace.client_error_category == "network_error"
     assert llm_trace.violated_available_tool_set is True

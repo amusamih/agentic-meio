@@ -15,11 +15,6 @@ from meio.contracts import RegimeLabel
 from meio.utils.env import DEFAULT_ENV_FILE, load_env_value
 
 
-def _validate_optional_non_negative_int(value: int | None, field_name: str) -> None:
-    if value is not None and value < 0:
-        raise ValueError(f"{field_name} must be non-negative when provided.")
-
-
 @dataclass(frozen=True, slots=True)
 class LLMMessage:
     """Structured message sent to an LLM client."""
@@ -70,10 +65,6 @@ class LLMClientContext:
     backlog_heavy_vs_baseline: bool | None = None
     recovery_with_high_pipeline_load: bool | None = None
     recovery_with_high_backorder_load: bool | None = None
-    external_evidence_present: bool | None = None
-    external_evidence_source_count: int | None = None
-    external_evidence_false_alarm_present: bool | None = None
-    external_evidence_summaries: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.benchmark_id.strip():
@@ -125,26 +116,10 @@ class LLMClientContext:
             "backlog_heavy_vs_baseline",
             "recovery_with_high_pipeline_load",
             "recovery_with_high_backorder_load",
-            "external_evidence_present",
-            "external_evidence_false_alarm_present",
         ):
             value = getattr(self, field_name)
             if value is not None and not isinstance(value, bool):
                 raise TypeError(f"{field_name} must be a bool when provided.")
-        _validate_optional_non_negative_int(
-            self.external_evidence_source_count,
-            "external_evidence_source_count",
-        )
-        object.__setattr__(
-            self,
-            "external_evidence_summaries",
-            tuple(self.external_evidence_summaries),
-        )
-        for summary in self.external_evidence_summaries:
-            if not summary.strip():
-                raise ValueError(
-                    "external_evidence_summaries must contain non-empty strings."
-                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,11 +292,6 @@ def _fake_payload_for_context(context: LLMClientContext) -> dict[str, object]:
         for tool_id in preferred_tool_ids
         if tool_id in context.available_tool_ids
     )
-    if (
-        context.external_evidence_present
-        and "external_evidence_tool" in context.available_tool_ids
-    ):
-        selected_tool_ids = ("external_evidence_tool",) + selected_tool_ids
     deduped_tool_ids: list[str] = []
     for tool_id in selected_tool_ids:
         if tool_id not in deduped_tool_ids:
@@ -333,8 +303,8 @@ def _fake_payload_for_context(context: LLMClientContext) -> dict[str, object]:
             payload["request_replan"] = False
             payload["update_request_types"] = ["keep_current"]
             payload["rationale"] = (
-                "External evidence is present, so inspect it first before deciding whether "
-                "any bounded planning change is justified."
+                "Signals remain close to baseline after bounded inspection, so no planning "
+                "change is justified."
             )
         else:
             payload["request_replan"] = True

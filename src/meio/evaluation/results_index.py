@@ -49,7 +49,6 @@ class IndexedRunRecord:
     mode: str
     provider: str | None
     model_name: str | None
-    external_evidence_source: str | None
     artifact_use_class: ArtifactUseClass
     validity_gate_passed: bool
     eligibility_notes: tuple[str, ...]
@@ -80,8 +79,6 @@ def classify_artifact_governance(
     validity_gate_passed: bool,
     rollout_fidelity_gate_passed: bool = False,
     operational_metrics_gate_passed: bool = False,
-    semi_synthetic_external_evidence: bool = False,
-    external_evidence_source: str | None = None,
 ) -> ArtifactGovernanceDecision:
     """Classify one mode-level or run-level artifact scope."""
 
@@ -89,13 +86,8 @@ def classify_artifact_governance(
     lowered_name = experiment_name.lower()
     if any(marker in lowered_name for marker in _INTERNAL_ONLY_EXPERIMENT_MARKERS):
         notes.append("schema_or_smoke_validation_run")
-    normalized_external_evidence_source = external_evidence_source
-    if normalized_external_evidence_source is None and semi_synthetic_external_evidence:
-        normalized_external_evidence_source = "semi_synthetic"
     if provider == "fake_llm_client":
         notes.append("fake_llm_internal_only")
-    if normalized_external_evidence_source == "semi_synthetic":
-        notes.append("semi_synthetic_external_evidence_branch")
     if not validity_gate_passed:
         notes.append("validity_gates_failed")
     if benchmark_source == "stockpyl_serial":
@@ -167,10 +159,6 @@ def index_result_runs(results_root: str | Path = "results") -> tuple[IndexedRunR
         aggregate_payload = _load_optional_json(run_dir / "aggregate_summary.json")
         provider = _payload_string(metadata_payload, "provider")
         model_name = _payload_string(metadata_payload, "model_name")
-        external_evidence_source = _payload_string(
-            metadata_payload,
-            "external_evidence_source",
-        )
         benchmark_source = _payload_string(manifest_payload, "benchmark_source")
         validation_lane = _resolve_validation_lane(
             metadata_payload=metadata_payload,
@@ -194,13 +182,6 @@ def index_result_runs(results_root: str | Path = "results") -> tuple[IndexedRunR
                     operational_metrics_gate_passed=_mode_operational_metrics_passed(
                         mode_summary
                     ),
-                    external_evidence_source=(
-                        _nested_payload_string(
-                            mode_summary.get("external_evidence_summary"),
-                            "external_evidence_source",
-                        )
-                        or external_evidence_source
-                    ),
                 )
                 performance_summary = mode_summary.get("performance_summary")
                 records.append(
@@ -214,13 +195,6 @@ def index_result_runs(results_root: str | Path = "results") -> tuple[IndexedRunR
                         mode=mode_name,
                         provider=provider,
                         model_name=model_name,
-                        external_evidence_source=(
-                            _nested_payload_string(
-                                mode_summary.get("external_evidence_summary"),
-                                "external_evidence_source",
-                            )
-                            or external_evidence_source
-                        ),
                         artifact_use_class=ArtifactUseClass(
                             _payload_string(mode_summary, "artifact_use_class")
                             or governance.artifact_use_class.value
@@ -262,7 +236,6 @@ def index_result_runs(results_root: str | Path = "results") -> tuple[IndexedRunR
                 if isinstance(metadata_payload, dict)
                 else False
             ),
-            external_evidence_source=external_evidence_source,
         )
         records.append(
             IndexedRunRecord(
@@ -275,7 +248,6 @@ def index_result_runs(results_root: str | Path = "results") -> tuple[IndexedRunR
                 mode=_payload_string(metadata_payload, "mode") or "unknown",
                 provider=provider,
                 model_name=model_name,
-                external_evidence_source=external_evidence_source,
                 artifact_use_class=ArtifactUseClass(
                     _payload_string(metadata_payload, "artifact_use_class")
                     or governance.artifact_use_class.value
@@ -373,16 +345,6 @@ def _nested_payload_float(payload: object, key: str) -> float | None:
     if not isinstance(value, (int, float)):
         raise ValueError(f"{key} must be numeric when present.")
     return float(value)
-
-
-def _nested_payload_string(payload: object, key: str) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-    value = payload.get(key)
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    return stripped or None
 
 
 def _int_from_payload(payload: dict[str, object], key: str) -> int:

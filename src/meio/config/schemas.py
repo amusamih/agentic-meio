@@ -17,8 +17,6 @@ ALLOWED_RUNTIME_MODES = (
     "deterministic_baseline",
     "deterministic_orchestrator",
     "llm_orchestrator",
-    "llm_orchestrator_internal_only",
-    "llm_orchestrator_with_external_evidence",
 )
 DEFAULT_RUNTIME_MODE_SET = (
     "deterministic_baseline",
@@ -30,9 +28,6 @@ ALLOWED_TOOL_ABLATION_VARIANTS = (
     "no_forecast_tool",
     "no_leadtime_tool",
     "no_scenario_tool",
-)
-ALLOWED_EXTERNAL_EVIDENCE_SOURCES = (
-    "semi_synthetic",
 )
 ALLOWED_VALIDATION_LANES = (
     "stockpyl_internal",
@@ -199,8 +194,6 @@ class ExperimentConfig:
     seed_set: tuple[int, ...] = field(default_factory=tuple)
     mode_set: tuple[str, ...] = field(default_factory=lambda: DEFAULT_RUNTIME_MODE_SET)
     tool_ablation_variants: tuple[str, ...] = field(default_factory=lambda: ("full",))
-    semi_synthetic_external_evidence: bool = False
-    external_evidence_source: str | None = None
     results_dir: Path = Path("results")
 
     def __post_init__(self) -> None:
@@ -248,17 +241,6 @@ class ExperimentConfig:
                 "tool_ablation_variants",
                 ALLOWED_TOOL_ABLATION_VARIANTS,
             )
-        if self.external_evidence_source is not None:
-            _validate_choice(
-                self.external_evidence_source,
-                "external_evidence_source",
-                ALLOWED_EXTERNAL_EVIDENCE_SOURCES,
-            )
-        resolved_evidence_source = self.resolved_external_evidence_source()
-        if resolved_evidence_source not in {None, "semi_synthetic"}:
-            raise ValueError(
-                "Only semi_synthetic external evidence is supported after cleanup."
-            )
         if not isinstance(self.results_dir, Path):
             raise TypeError("results_dir must be a Path.")
 
@@ -292,16 +274,6 @@ class ExperimentConfig:
         """Return the explicit tool-ablation variants for the experiment."""
 
         return self.tool_ablation_variants
-
-    def resolved_external_evidence_source(self) -> str | None:
-        """Return the explicit external evidence source for this experiment."""
-
-        if self.external_evidence_source is not None:
-            return self.external_evidence_source
-        if self.semi_synthetic_external_evidence:
-            return "semi_synthetic"
-        return None
-
 
 @dataclass(frozen=True, slots=True)
 class AgentConfig:

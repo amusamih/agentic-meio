@@ -27,15 +27,6 @@ def _mean_or_none(values: tuple[float | int | None, ...]) -> float | None:
     return sum(numeric) / len(numeric)
 
 
-def _single_text_or_mixed(values: tuple[str | None, ...]) -> str | None:
-    normalized = tuple(value for value in values if value is not None)
-    if not normalized:
-        return None
-    if len(set(normalized)) == 1:
-        return normalized[0]
-    return "mixed"
-
-
 @dataclass(frozen=True, slots=True)
 class AggregateBenchmarkMetrics:
     """Aggregate benchmark-level metrics over repeated controlled runs."""
@@ -138,50 +129,6 @@ class AggregateToolUseSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class AggregateExternalEvidenceSummary:
-    """Compact summary for semi-synthetic external evidence use."""
-
-    external_evidence_source: str | None
-    external_evidence_period_count: int
-    external_evidence_tool_call_count: int
-    false_alarm_evidence_count: int
-    evidence_supported_intervention_count: int
-    external_evidence_changed_optimizer_input_count: int
-    evidence_fusion_cap_count: int = 0
-    capped_external_strengthening_count: int = 0
-    early_evidence_confirmation_gate_count: int = 0
-    early_evidence_family_change_block_count: int = 0
-    corroboration_gate_count: int = 0
-    corroborated_family_change_count: int = 0
-    role_level_usage_counts: tuple[tuple[str, int], ...] = ()
-
-    def __post_init__(self) -> None:
-        if self.external_evidence_source is not None and not self.external_evidence_source.strip():
-            raise ValueError("external_evidence_source must be non-empty when provided.")
-        for field_name in (
-            "external_evidence_period_count",
-            "external_evidence_tool_call_count",
-            "false_alarm_evidence_count",
-            "evidence_supported_intervention_count",
-            "external_evidence_changed_optimizer_input_count",
-            "evidence_fusion_cap_count",
-            "capped_external_strengthening_count",
-            "early_evidence_confirmation_gate_count",
-            "early_evidence_family_change_block_count",
-            "corroboration_gate_count",
-            "corroborated_family_change_count",
-        ):
-            if getattr(self, field_name) < 0:
-                raise ValueError(f"{field_name} must be non-negative.")
-        object.__setattr__(self, "role_level_usage_counts", tuple(self.role_level_usage_counts))
-        for role_label, count in self.role_level_usage_counts:
-            if not role_label.strip():
-                raise ValueError("role_level_usage_counts must use non-empty role labels.")
-            if count < 0:
-                raise ValueError("role_level_usage_counts must use non-negative counts.")
-
-
-@dataclass(frozen=True, slots=True)
 class AggregateRobustnessSummary:
     """Compact robustness-screen summary across schedules and seeds."""
 
@@ -277,7 +224,6 @@ class ScheduleAggregateSummary:
     validity_summary: AggregateValiditySummary
     performance_summary: AggregatePerformanceSummary
     tool_use_summary: AggregateToolUseSummary
-    external_evidence_summary: AggregateExternalEvidenceSummary | None
     robustness_summary: AggregateRobustnessSummary
 
     def __post_init__(self) -> None:
@@ -302,7 +248,6 @@ class ModeAggregateSummary:
     validity_summary: AggregateValiditySummary
     performance_summary: AggregatePerformanceSummary
     tool_use_summary: AggregateToolUseSummary
-    external_evidence_summary: AggregateExternalEvidenceSummary | None
     robustness_summary: AggregateRobustnessSummary
     optimizer_order_boundary_preserved: bool
     validation_lane: str | None = None
@@ -373,7 +318,6 @@ class AblationAggregateSummary:
     validity_summary: AggregateValiditySummary
     performance_summary: AggregatePerformanceSummary
     tool_use_summary: AggregateToolUseSummary
-    external_evidence_summary: AggregateExternalEvidenceSummary | None
     robustness_summary: AggregateRobustnessSummary
     optimizer_order_boundary_preserved: bool
     tool_usage_summary: ToolUsageSummary | None = None
@@ -467,7 +411,6 @@ def aggregate_mode_episode_summaries(
         validity_summary=_aggregate_validity_summary(records),
         performance_summary=_aggregate_performance_summary(records),
         tool_use_summary=_aggregate_tool_use_summary(records),
-        external_evidence_summary=_aggregate_external_evidence_summary(records),
         robustness_summary=_aggregate_robustness_summary(
             records=records,
             schedule_names=schedule_names,
@@ -568,7 +511,6 @@ def _aggregate_schedule_records(
         validity_summary=_aggregate_validity_summary(selected),
         performance_summary=_aggregate_performance_summary(selected),
         tool_use_summary=_aggregate_tool_use_summary(selected),
-        external_evidence_summary=_aggregate_external_evidence_summary(selected),
         robustness_summary=_aggregate_robustness_summary(
             records=selected,
             schedule_names=(schedule_name,),
@@ -639,7 +581,6 @@ def _aggregate_ablation_records(
         validity_summary=_aggregate_validity_summary(selected_records),
         performance_summary=_aggregate_performance_summary(selected_records),
         tool_use_summary=_aggregate_tool_use_summary(selected_records),
-        external_evidence_summary=_aggregate_external_evidence_summary(selected_records),
         robustness_summary=_aggregate_robustness_summary(
             records=selected_records,
             schedule_names=schedule_names,
@@ -855,72 +796,6 @@ def _aggregate_telemetry_metrics(
     )
 
 
-def _aggregate_external_evidence_summary(
-    records: tuple[EpisodeSummaryRecord, ...],
-) -> AggregateExternalEvidenceSummary | None:
-    external_evidence_source = _single_text_or_mixed(
-        tuple(record.external_evidence_source for record in records)
-    )
-    period_count = sum(record.external_evidence_period_count for record in records)
-    tool_call_count = sum(record.external_evidence_tool_call_count for record in records)
-    false_alarm_count = sum(record.false_alarm_evidence_count for record in records)
-    intervention_count = sum(
-        record.evidence_supported_intervention_count for record in records
-    )
-    optimizer_input_change_count = sum(
-        record.external_evidence_changed_optimizer_input_count for record in records
-    )
-    evidence_fusion_cap_count = sum(record.evidence_fusion_cap_count for record in records)
-    capped_external_strengthening_count = sum(
-        record.capped_external_strengthening_count for record in records
-    )
-    early_evidence_confirmation_gate_count = sum(
-        record.early_evidence_confirmation_gate_count for record in records
-    )
-    early_evidence_family_change_block_count = sum(
-        record.early_evidence_family_change_block_count for record in records
-    )
-    corroboration_gate_count = sum(
-        record.corroboration_gate_count for record in records
-    )
-    corroborated_family_change_count = sum(
-        record.corroborated_family_change_count for record in records
-    )
-    role_level_counter: Counter[str] = Counter()
-    for record in records:
-        role_level_counter.update(dict(record.role_level_usage_counts))
-    if (
-        period_count == 0
-        and tool_call_count == 0
-        and false_alarm_count == 0
-        and intervention_count == 0
-        and optimizer_input_change_count == 0
-        and evidence_fusion_cap_count == 0
-        and capped_external_strengthening_count == 0
-        and early_evidence_confirmation_gate_count == 0
-        and early_evidence_family_change_block_count == 0
-        and corroboration_gate_count == 0
-        and corroborated_family_change_count == 0
-        and not role_level_counter
-    ):
-        return None
-    return AggregateExternalEvidenceSummary(
-        external_evidence_source=external_evidence_source,
-        external_evidence_period_count=period_count,
-        external_evidence_tool_call_count=tool_call_count,
-        false_alarm_evidence_count=false_alarm_count,
-        evidence_supported_intervention_count=intervention_count,
-        external_evidence_changed_optimizer_input_count=optimizer_input_change_count,
-        evidence_fusion_cap_count=evidence_fusion_cap_count,
-        capped_external_strengthening_count=capped_external_strengthening_count,
-        early_evidence_confirmation_gate_count=early_evidence_confirmation_gate_count,
-        early_evidence_family_change_block_count=early_evidence_family_change_block_count,
-        corroboration_gate_count=corroboration_gate_count,
-        corroborated_family_change_count=corroborated_family_change_count,
-        role_level_usage_counts=tuple(sorted(role_level_counter.items())),
-    )
-
-
 def _aggregate_robustness_summary(
     *,
     records: tuple[EpisodeSummaryRecord, ...],
@@ -947,7 +822,6 @@ def _aggregate_robustness_summary(
 __all__ = [
     "AggregateBenchmarkMetrics",
     "AggregateDecisionQualityMetrics",
-    "AggregateExternalEvidenceSummary",
     "AggregatePerformanceSummary",
     "AggregateTelemetryMetrics",
     "AggregateToolUseSummary",

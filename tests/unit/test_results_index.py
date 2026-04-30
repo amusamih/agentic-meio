@@ -60,21 +60,6 @@ def test_classify_artifact_governance_marks_live_runs_paper_candidate_once_gates
     assert decision.eligibility_notes == ()
 
 
-def test_classify_artifact_governance_marks_semi_synthetic_external_evidence_internal_only() -> None:
-    decision = classify_artifact_governance(
-        experiment_name="stockpyl_serial_external_evidence",
-        benchmark_source="stockpyl_serial",
-        provider="openai",
-        validity_gate_passed=True,
-        rollout_fidelity_gate_passed=True,
-        operational_metrics_gate_passed=True,
-        semi_synthetic_external_evidence=True,
-    )
-
-    assert decision.artifact_use_class is ArtifactUseClass.INTERNAL_ONLY
-    assert decision.eligibility_notes == ("semi_synthetic_external_evidence_branch",)
-
-
 def test_summarize_directory_governance_collapses_mode_decisions() -> None:
     live_decision = classify_artifact_governance(
         experiment_name="stockpyl_serial_live_llm_eval",
@@ -185,7 +170,6 @@ def test_list_paper_eligible_runs_filters_indexed_output(
                 mode="llm_orchestrator",
                 provider="fake_llm_client",
                 model_name="gpt-4o-mini",
-                external_evidence_source=None,
                 artifact_use_class=ArtifactUseClass.INTERNAL_ONLY,
                 validity_gate_passed=True,
                 eligibility_notes=("fake_llm_internal_only",),

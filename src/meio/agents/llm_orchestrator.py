@@ -35,9 +35,6 @@ from meio.scenarios.update_calibration import (
     UpdateCalibrationResult,
     calibrate_update_decision,
 )
-from meio.simulation.external_evidence_alignment import (
-    summarize_external_evidence_batch,
-)
 from meio.simulation.evidence import RuntimeEvidence
 from meio.simulation.state import Observation, SimulationState
 _PIPELINE_HEAVY_RATIO_THRESHOLD = 12.0
@@ -275,17 +272,6 @@ class LLMOrchestrator:
             total_backorder_value,
             demand_baseline_value,
         )
-        external_evidence_batch = orchestration_input.evidence.external_evidence_batch
-        external_evidence_enabled = (
-            "external_evidence_tool" in orchestration_input.mission.admissible_tool_ids
-        )
-        external_evidence_present = (
-            external_evidence_batch is not None
-            and external_evidence_batch.record_count > 0
-        )
-        include_external_evidence_context = (
-            external_evidence_enabled or external_evidence_present
-        )
         pipeline_heavy_vs_baseline = _flag_from_ratio(
             pipeline_ratio_to_baseline,
             threshold=_PIPELINE_HEAVY_RATIO_THRESHOLD,
@@ -342,26 +328,6 @@ class LLMOrchestrator:
             ),
             recovery_with_high_backorder_load=(
                 current_regime is RegimeLabel.RECOVERY and backlog_heavy_vs_baseline
-            ),
-            external_evidence_present=(
-                external_evidence_present
-                if include_external_evidence_context
-                else None
-            ),
-            external_evidence_source_count=(
-                external_evidence_batch.record_count
-                if include_external_evidence_context and external_evidence_batch is not None
-                else None
-            ),
-            external_evidence_false_alarm_present=(
-                external_evidence_batch.contains_false_alarm
-                if include_external_evidence_context and external_evidence_batch is not None
-                else None
-            ),
-            external_evidence_summaries=(
-                summarize_external_evidence_batch(external_evidence_batch)
-                if include_external_evidence_context
-                else ()
             ),
         )
         return LLMCompletionRequest(

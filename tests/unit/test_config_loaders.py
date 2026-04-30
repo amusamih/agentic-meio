@@ -177,29 +177,6 @@ def test_load_frozen_broad_eval_experiment_config_preserves_frozen_full_tool_pat
     assert experiment_config.results_dir == Path("results/stockpyl_serial_frozen_broad_eval")
 
 
-def test_load_external_evidence_experiment_config_keeps_control_and_branch_modes_separate() -> None:
-    experiment_config = load_experiment_config(
-        REPO_ROOT / "configs/experiment/stockpyl_serial_external_evidence.toml"
-    )
-
-    assert experiment_config.mode_set == (
-        "deterministic_baseline",
-        "deterministic_orchestrator",
-        "llm_orchestrator_internal_only",
-        "llm_orchestrator_with_external_evidence",
-    )
-    assert experiment_config.tool_ablation_variants == ("full",)
-    assert experiment_config.semi_synthetic_external_evidence is True
-    assert experiment_config.seed_set == (20260417, 20260418)
-    assert tuple(schedule.name for schedule in experiment_config.regime_schedules) == (
-        "shift_recovery",
-        "false_alarm_then_real_shift",
-        "double_shift_with_gap",
-        "recovery_then_relapse",
-    )
-    assert experiment_config.results_dir == Path("results/stockpyl_serial_external_evidence")
-
-
 def test_load_public_benchmark_eval_config_reads_replenishmentenv_defaults() -> None:
     config = load_public_benchmark_eval_config(
         REPO_ROOT / "configs/experiment/public_benchmark_eval.toml"

@@ -88,7 +88,6 @@ class ExperimentMetadata:
     provider: str | None
     model_name: str | None
     validation_lane: str | None = None
-    external_evidence_source: str | None = None
     tool_ablation_variants: tuple[str, ...] = ()
     artifact_use_class: ArtifactUseClass = ArtifactUseClass.INTERNAL_ONLY
     validity_gate_passed: bool = False
@@ -120,11 +119,6 @@ class ExperimentMetadata:
             _validate_non_empty_text(self.provider, "provider")
         if self.model_name is not None:
             _validate_non_empty_text(self.model_name, "model_name")
-        if self.external_evidence_source is not None:
-            _validate_non_empty_text(
-                self.external_evidence_source,
-                "external_evidence_source",
-            )
         if not isinstance(self.artifact_use_class, ArtifactUseClass):
             raise TypeError("artifact_use_class must be an ArtifactUseClass.")
         object.__setattr__(
@@ -170,7 +164,6 @@ class RunManifestRecord:
     provider: str | None
     model_name: str | None
     validation_lane: str | None = None
-    external_evidence_source: str | None = None
     artifact_use_class: ArtifactUseClass = ArtifactUseClass.INTERNAL_ONLY
     validity_gate_passed: bool = False
     rollout_fidelity_gate_passed: bool = False
@@ -202,11 +195,6 @@ class RunManifestRecord:
             _validate_non_empty_text(self.provider, "provider")
         if self.model_name is not None:
             _validate_non_empty_text(self.model_name, "model_name")
-        if self.external_evidence_source is not None:
-            _validate_non_empty_text(
-                self.external_evidence_source,
-                "external_evidence_source",
-            )
         if not isinstance(self.artifact_use_class, ArtifactUseClass):
             raise TypeError("artifact_use_class must be an ArtifactUseClass.")
         object.__setattr__(
@@ -308,19 +296,6 @@ class EpisodeSummaryRecord:
     unresolved_stress_moderation_count: int = 0
     moderated_update_count: int = 0
     hysteresis_application_count: int = 0
-    external_evidence_source: str | None = None
-    external_evidence_period_count: int = 0
-    external_evidence_tool_call_count: int = 0
-    false_alarm_evidence_count: int = 0
-    evidence_supported_intervention_count: int = 0
-    external_evidence_changed_optimizer_input_count: int = 0
-    evidence_fusion_cap_count: int = 0
-    capped_external_strengthening_count: int = 0
-    early_evidence_confirmation_gate_count: int = 0
-    early_evidence_family_change_block_count: int = 0
-    corroboration_gate_count: int = 0
-    corroborated_family_change_count: int = 0
-    role_level_usage_counts: tuple[tuple[str, int], ...] = ()
     validation_lane: str | None = None
 
     def __post_init__(self) -> None:
@@ -336,11 +311,6 @@ class EpisodeSummaryRecord:
             _validate_non_empty_text(self.schedule_name, "schedule_name")
         if self.validation_lane is not None:
             _validate_non_empty_text(self.validation_lane, "validation_lane")
-        if self.external_evidence_source is not None:
-            _validate_non_empty_text(
-                self.external_evidence_source,
-                "external_evidence_source",
-            )
         _validate_optional_non_negative_int(self.run_seed, "run_seed")
         _validate_non_negative_int(self.echelon_count, "echelon_count")
         if self.echelon_count == 0:
@@ -376,23 +346,8 @@ class EpisodeSummaryRecord:
             "unresolved_stress_moderation_count",
             "moderated_update_count",
             "hysteresis_application_count",
-            "external_evidence_period_count",
-            "external_evidence_tool_call_count",
-            "false_alarm_evidence_count",
-            "evidence_supported_intervention_count",
-            "external_evidence_changed_optimizer_input_count",
-            "evidence_fusion_cap_count",
-            "capped_external_strengthening_count",
-            "early_evidence_confirmation_gate_count",
-            "early_evidence_family_change_block_count",
-            "corroboration_gate_count",
-            "corroborated_family_change_count",
         ):
             _validate_non_negative_int(getattr(self, field_name), field_name)
-        object.__setattr__(self, "role_level_usage_counts", tuple(self.role_level_usage_counts))
-        for role_label, count in self.role_level_usage_counts:
-            _validate_non_empty_text(role_label, "role_level_usage_counts")
-            _validate_non_negative_int(count, "role_level_usage_counts")
         for field_name in (
             "total_cost",
             "fill_rate",
@@ -476,26 +431,6 @@ class StepTraceRecord:
     unresolved_stress_moderation_applied: bool = False
     calibration_reason: str | None = None
     moderation_reason: str | None = None
-    external_evidence_source: str | None = None
-    external_evidence_present: bool = False
-    external_evidence_false_alarm: bool = False
-    external_evidence_tool_used: bool = False
-    external_evidence_supported_intervention: bool = False
-    external_evidence_role_labels: tuple[str, ...] = ()
-    external_evidence_corroboration_count: int = 0
-    external_evidence_changed_optimizer_input: bool | None = None
-    external_evidence_fusion_cap_applied: bool = False
-    corroboration_gate_applied: bool = False
-    corroborated_family_change_allowed: bool = False
-    proposed_external_strengthening: dict[str, float] | None = None
-    final_external_strengthening: dict[str, float] | None = None
-    external_evidence_fusion_cap_reason: str | None = None
-    corroboration_gate_reason: str | None = None
-    early_evidence_confirmation_gate_applied: bool = False
-    early_evidence_family_change_blocked: bool = False
-    proposed_external_update_requests: tuple[str, ...] = ()
-    final_external_update_requests: tuple[str, ...] = ()
-    early_evidence_confirmation_gate_reason: str | None = None
     validation_lane: str | None = None
 
     def __post_init__(self) -> None:
@@ -514,11 +449,6 @@ class StepTraceRecord:
         _validate_optional_non_negative_int(self.run_seed, "run_seed")
         if self.predicted_regime_label is not None:
             _validate_non_empty_text(self.predicted_regime_label, "predicted_regime_label")
-        if self.external_evidence_source is not None:
-            _validate_non_empty_text(
-                self.external_evidence_source,
-                "external_evidence_source",
-            )
         _validate_non_negative_int(self.period_index, "period_index")
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be within [0.0, 1.0] when provided.")
@@ -537,52 +467,13 @@ class StepTraceRecord:
         )
         object.__setattr__(
             self,
-            "proposed_external_update_requests",
-            _validate_string_tuple(
-                self.proposed_external_update_requests,
-                "proposed_external_update_requests",
-            ),
-        )
-        object.__setattr__(
-            self,
             "update_requests",
             _validate_string_tuple(self.update_requests, "update_requests"),
-        )
-        object.__setattr__(
-            self,
-            "final_external_update_requests",
-            _validate_string_tuple(
-                self.final_external_update_requests,
-                "final_external_update_requests",
-            ),
-        )
-        object.__setattr__(
-            self,
-            "external_evidence_role_labels",
-            _validate_string_tuple(
-                self.external_evidence_role_labels,
-                "external_evidence_role_labels",
-            ),
         )
         if self.moderation_reason is not None:
             _validate_non_empty_text(self.moderation_reason, "moderation_reason")
         if self.calibration_reason is not None:
             _validate_non_empty_text(self.calibration_reason, "calibration_reason")
-        if self.external_evidence_fusion_cap_reason is not None:
-            _validate_non_empty_text(
-                self.external_evidence_fusion_cap_reason,
-                "external_evidence_fusion_cap_reason",
-            )
-        if self.corroboration_gate_reason is not None:
-            _validate_non_empty_text(
-                self.corroboration_gate_reason,
-                "corroboration_gate_reason",
-            )
-        if self.early_evidence_confirmation_gate_reason is not None:
-            _validate_non_empty_text(
-                self.early_evidence_confirmation_gate_reason,
-                "early_evidence_confirmation_gate_reason",
-            )
         if self.proposed_update_strength is not None:
             _validate_non_empty_text(
                 self.proposed_update_strength,
@@ -604,10 +495,6 @@ class StepTraceRecord:
             self.sequencing_blocked_tool_request_count,
             "sequencing_blocked_tool_request_count",
         )
-        _validate_non_negative_int(
-            self.external_evidence_corroboration_count,
-            "external_evidence_corroboration_count",
-        )
         for field_name in (
             "optimizer_orders",
             "inventory_by_echelon",
@@ -624,25 +511,6 @@ class StepTraceRecord:
                 "scenario_adjustment_summary",
                 dict(self.scenario_adjustment_summary),
             )
-        for field_name in (
-            "proposed_external_strengthening",
-            "final_external_strengthening",
-        ):
-            payload = getattr(self, field_name)
-            if payload is not None:
-                normalized_payload = dict(payload)
-                object.__setattr__(self, field_name, normalized_payload)
-                for key, value in normalized_payload.items():
-                    _validate_non_empty_text(str(key), field_name)
-                    _validate_optional_non_negative_float(float(value), field_name)
-        if self.external_evidence_changed_optimizer_input is not None and not isinstance(
-            self.external_evidence_changed_optimizer_input,
-            bool,
-        ):
-            raise TypeError(
-                "external_evidence_changed_optimizer_input must be a bool when provided."
-            )
-
 
 @dataclass(frozen=True, slots=True)
 class LLMCallTraceRecord:
@@ -687,8 +555,6 @@ class LLMCallTraceRecord:
     client_error_category: str | None = None
     client_error_message: str | None = None
     failure_after_response: bool | None = None
-    external_evidence_present: bool = False
-    external_evidence_tool_available: bool = False
     validation_lane: str | None = None
 
     def __post_init__(self) -> None:

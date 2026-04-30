@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 from meio.contracts import RegimeLabel
-
-if TYPE_CHECKING:
-    from meio.data.external_evidence import ExternalEvidenceBatch
 
 
 def _coerce_non_negative_series(
@@ -114,7 +110,6 @@ class RuntimeEvidence:
     scenario_families: tuple[RegimeLabel, ...]
     demand_baseline_value: float | None = None
     leadtime_baseline_value: float | None = None
-    external_evidence_batch: "ExternalEvidenceBatch | None" = None
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
@@ -141,13 +136,6 @@ class RuntimeEvidence:
         for family in self.scenario_families:
             if not isinstance(family, RegimeLabel):
                 raise TypeError("scenario_families must contain RegimeLabel values.")
-        if self.external_evidence_batch is not None:
-            from meio.data.external_evidence import ExternalEvidenceBatch
-
-            if not isinstance(self.external_evidence_batch, ExternalEvidenceBatch):
-                raise TypeError(
-                    "external_evidence_batch must be an ExternalEvidenceBatch when provided."
-                )
         for note in self.notes:
             if not note.strip():
                 raise ValueError("notes must contain non-empty strings.")

@@ -10,10 +10,6 @@ from typing import TYPE_CHECKING
 from typing import Iterable
 
 from meio.agents.llm_client import LLMClientRuntimeError
-from meio.agents.external_evidence_tool import (
-    ExternalEvidenceInterpretation,
-    apply_external_evidence_bias,
-)
 from meio.agents.telemetry import (
     LLMCallTelemetry,
     OrchestrationStepTelemetry,
@@ -767,20 +763,6 @@ class OrchestrationRuntime:
         leadtime_outlook = observation.leadtime_realization[-1]
         safety_buffer_scale = 1.0
         for result in prior_results:
-            external_evidence_interpretation = result.structured_output.get(
-                "external_evidence_interpretation"
-            )
-            if isinstance(external_evidence_interpretation, ExternalEvidenceInterpretation):
-                (
-                    demand_outlook,
-                    leadtime_outlook,
-                    safety_buffer_scale,
-                ) = apply_external_evidence_bias(
-                    external_evidence_interpretation,
-                    demand_outlook=demand_outlook,
-                    leadtime_outlook=leadtime_outlook,
-                    safety_buffer_scale=safety_buffer_scale,
-                )
             forecast_result = result.structured_output.get("forecast_result")
             if isinstance(forecast_result, ForecastResult):
                 demand_outlook = forecast_result.point_forecast[0]
@@ -966,7 +948,6 @@ class OrchestrationRuntime:
             value,
             (
                 AgentAssessment,
-                ExternalEvidenceInterpretation,
                 ForecastResult,
                 LeadTimeResult,
                 ScenarioSummary,

@@ -520,7 +520,6 @@ def test_write_paper_candidate_artifacts_marks_real_modes_as_paper_candidates() 
         if output_root.exists():
             shutil.rmtree(output_root, ignore_errors=True)
 
-
 def test_write_stockpyl_serial_artifacts_writes_deterministic_files() -> None:
     output_root = Path(".tmp_stockpyl_artifact_tests") / uuid4().hex
     try:
@@ -703,99 +702,3 @@ def test_write_stockpyl_serial_artifacts_writes_tool_ablation_metadata() -> None
     finally:
         if output_root.exists():
             shutil.rmtree(output_root, ignore_errors=True)
-
-
-def test_external_evidence_mode_sweep_preserves_control_and_branch_pairing() -> None:
-    sweep = run_stockpyl_serial_mode_sweep(
-        "configs/experiment/stockpyl_serial_external_evidence.toml",
-        llm_client_mode_override="fake",
-        max_runs=2,
-    )
-
-    assert tuple(batch.mode for batch in sweep.mode_batches) == (
-        "deterministic_baseline",
-        "deterministic_orchestrator",
-        "llm_orchestrator_internal_only",
-        "llm_orchestrator_with_external_evidence",
-    )
-    run_pairs_by_mode = {
-        batch.mode: {(run.schedule_name, run.run_seed) for run in batch.runs}
-        for batch in sweep.mode_batches
-    }
-    expected_pairs = {
-        ("shift_recovery", 20260417),
-        ("shift_recovery", 20260418),
-    }
-    assert all(pairs == expected_pairs for pairs in run_pairs_by_mode.values())
-    external_batch = next(
-        batch for batch in sweep.mode_batches if batch.mode == "llm_orchestrator_with_external_evidence"
-    )
-    assert external_batch.aggregate_metrics is not None
-    assert external_batch.aggregate_metrics.external_evidence_summary is not None
-    assert (
-        external_batch.aggregate_metrics.external_evidence_summary.external_evidence_period_count
-        > 0
-    )
-
-
-def test_write_external_evidence_artifacts_marks_branch_internal_only() -> None:
-    output_root = Path(".tmp_stockpyl_artifact_tests") / uuid4().hex
-    try:
-        metadata, _, written_files = write_stockpyl_serial_artifacts(
-            "configs/experiment/stockpyl_serial_external_evidence.toml",
-            mode="all",
-            llm_client_mode_override="fake",
-            output_dir_override=output_root,
-            max_runs=2,
-        )
-
-        assert metadata.artifact_use_class.value == "internal_only"
-        assert "semi_synthetic_external_evidence_branch" in metadata.eligibility_notes
-        aggregate_payload = json.loads(
-            written_files["aggregate_summary"].read_text(encoding="utf-8")
-        )
-        mode_names = [item["mode"] for item in aggregate_payload["mode_summaries"]]
-        assert mode_names == [
-            "deterministic_baseline",
-            "deterministic_orchestrator",
-            "llm_orchestrator_internal_only",
-            "llm_orchestrator_with_external_evidence",
-        ]
-        external_mode = next(
-            item
-            for item in aggregate_payload["mode_summaries"]
-            if item["mode"] == "llm_orchestrator_with_external_evidence"
-        )
-        assert external_mode["artifact_use_class"] == "internal_only"
-        assert external_mode["external_evidence_summary"]["external_evidence_period_count"] > 0
-    finally:
-        if output_root.exists():
-            shutil.rmtree(output_root, ignore_errors=True)
-
-
-def test_external_evidence_fake_run_exposes_early_confirmation_gate_fields() -> None:
-    batch = run_stockpyl_serial_batch(
-        "configs/experiment/stockpyl_serial_external_evidence.toml",
-        mode="llm_orchestrator_with_external_evidence",
-        llm_client_mode_override="fake",
-        max_runs=2,
-    )
-
-    assert batch.aggregate_metrics is not None
-    assert batch.aggregate_metrics.external_evidence_summary is not None
-    assert (
-        batch.aggregate_metrics.external_evidence_summary.early_evidence_confirmation_gate_count
-        >= 0
-    )
-    assert (
-        batch.aggregate_metrics.external_evidence_summary.early_evidence_family_change_block_count
-        >= 0
-    )
-    assert all(
-        record.early_evidence_confirmation_gate_applied in {True, False}
-        and record.early_evidence_family_change_blocked in {True, False}
-        and isinstance(record.proposed_external_update_requests, tuple)
-        and isinstance(record.final_external_update_requests, tuple)
-        for run in batch.runs
-        for record in run.step_trace_records
-    )

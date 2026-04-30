@@ -157,18 +157,6 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
                 default=["full"],
             )
         ),
-        semi_synthetic_external_evidence=_optional_bool(
-            experiment_table,
-            "semi_synthetic_external_evidence",
-            "experiment",
-            default=False,
-        ),
-        external_evidence_source=_optional_optional_string(
-            experiment_table,
-            "external_evidence_source",
-            "experiment",
-            default=None,
-        ),
         results_dir=Path(_require_string(experiment_table, "results_dir", "experiment")),
     )
 

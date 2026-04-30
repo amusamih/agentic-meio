@@ -12,9 +12,6 @@ from pathlib import Path
 from time import perf_counter
 
 from meio.agents.baselines import DeterministicBaselinePolicy
-from meio.agents.external_evidence_tool import (
-    BoundedExternalEvidenceTool,
-)
 from meio.agents.llm_client import FakeLLMClient, OpenAILLMClient
 from meio.agents.llm_orchestrator import LLMOrchestrator
 from meio.agents.prompts import PROMPT_VERSION, prompt_contract_hash
@@ -103,9 +100,6 @@ from meio.simulation.serial_benchmark import (
     build_serial_orchestration_request,
     regime_for_period,
 )
-from meio.simulation.external_evidence_alignment import (
-    build_external_evidence_batch,
-)
 from meio.simulation.state import EpisodeTrace, PeriodTraceRecord
 
 
@@ -115,9 +109,6 @@ LEGACY_COMPARISON_MODES = (
     "deterministic_orchestrator",
     "llm_orchestrator",
 )
-LLM_INTERNAL_ONLY_MODE = "llm_orchestrator_internal_only"
-LLM_WITH_EXTERNAL_EVIDENCE_MODE = "llm_orchestrator_with_external_evidence"
-EXTERNAL_EVIDENCE_TOOL_ID = "external_evidence_tool"
 VALIDATION_LANE = "stockpyl_internal"
 TOOL_IDS_BY_ABLATION = {
     "full": ("forecast_tool", "leadtime_tool", "scenario_tool"),
@@ -394,10 +385,6 @@ class StockpylSerialModeBatch:
             aggregate["ablation_breakdown"] = [
                 jsonable(item) for item in self.aggregate_metrics.ablation_breakdown
             ]
-            if self.aggregate_metrics.external_evidence_summary is not None:
-                aggregate["external_evidence_summary"] = jsonable(
-                    self.aggregate_metrics.external_evidence_summary
-                )
             aggregate["rubric_summary"] = {
                 "validity": jsonable(self.aggregate_metrics.validity_summary),
                 "decision_quality": jsonable(self.aggregate_metrics.decision_quality),
@@ -618,40 +605,11 @@ def _normalize_llm_client_mode(value: str) -> str:
 
 
 def _normalize_mode_alias(mode: str) -> str:
-    if mode == LLM_INTERNAL_ONLY_MODE:
-        return "llm_orchestrator"
-    if mode == LLM_WITH_EXTERNAL_EVIDENCE_MODE:
-        return "llm_orchestrator"
     return mode
 
 
 def _mode_uses_llm(mode: str) -> bool:
     return _normalize_mode_alias(mode) == "llm_orchestrator"
-
-
-def _mode_enables_external_evidence(mode: str) -> bool:
-    return mode == LLM_WITH_EXTERNAL_EVIDENCE_MODE
-
-
-def _resolved_external_evidence_source(experiment_config: ExperimentConfig) -> str | None:
-    return experiment_config.resolved_external_evidence_source()
-
-
-def _build_external_evidence_batch_for_period(
-    *,
-    experiment_config: ExperimentConfig,
-    evaluation_case: EvaluationCase,
-    time_index: int,
-):
-    source = _resolved_external_evidence_source(experiment_config)
-    if source == "semi_synthetic":
-        return build_external_evidence_batch(
-            schedule_name=evaluation_case.schedule_name,
-            regime_schedule=evaluation_case.regime_schedule,
-            period_index=time_index,
-            run_seed=evaluation_case.run_seed,
-        )
-    return None
 
 
 def _resolve_agent_config(
@@ -704,19 +662,12 @@ def _candidate_tool_ids_for_ablation(tool_ablation_variant: str) -> tuple[str, .
 
 def _candidate_tool_ids_for_mode(
     tool_ablation_variant: str,
-    *,
-    external_evidence_enabled: bool,
 ) -> tuple[str, ...]:
-    candidate_tool_ids = _candidate_tool_ids_for_ablation(tool_ablation_variant)
-    if external_evidence_enabled:
-        return candidate_tool_ids + (EXTERNAL_EVIDENCE_TOOL_ID,)
-    return candidate_tool_ids
+    return _candidate_tool_ids_for_ablation(tool_ablation_variant)
 
 
 def _build_mission(
     tool_ablation_variant: str = "full",
-    *,
-    external_evidence_enabled: bool = False,
 ) -> MissionSpec:
     return MissionSpec(
         mission_id="stockpyl_serial_controlled_rollout",
@@ -724,10 +675,7 @@ def _build_mission(
             "Inspect Stockpyl-backed serial evidence, manage bounded uncertainty, and "
             "keep replenishment orders inside the trusted optimizer boundary."
         ),
-        admissible_tool_ids=_candidate_tool_ids_for_mode(
-            tool_ablation_variant,
-            external_evidence_enabled=external_evidence_enabled,
-        ),
+        admissible_tool_ids=_candidate_tool_ids_for_mode(tool_ablation_variant),
     )
 
 
@@ -794,16 +742,11 @@ def _benchmark_case_for_seed(
 
 def _build_runtime(agent_config: AgentConfig, *, mode: str) -> tuple[OrchestrationRuntime, str | None]:
     normalized_mode = _normalize_mode_alias(mode)
-    external_evidence_enabled = _mode_enables_external_evidence(mode)
-    base_tools = (
+    tools = (
         DeterministicForecastTool(),
         DeterministicLeadTimeTool(),
         DeterministicScenarioTool(),
     )
-    if external_evidence_enabled:
-        tools = (BoundedExternalEvidenceTool(),) + base_tools
-    else:
-        tools = base_tools
     if normalized_mode == "deterministic_orchestrator":
         return OrchestrationRuntime(agent_config=agent_config, tools=tools), None
     if normalized_mode == "llm_orchestrator":
@@ -1123,8 +1066,6 @@ def _build_step_trace_record(
     cost_config,
     holding_cost_by_stage: tuple[float, ...],
     stockout_cost_by_stage: tuple[float, ...],
-    external_evidence_source: str | None,
-    external_evidence_batch,
 ) -> StepTraceRecord:
     predicted_regime_label = None
     confidence = None
@@ -1138,42 +1079,6 @@ def _build_step_trace_record(
     unresolved_stress_moderation_applied = False
     calibration_reason = None
     moderation_reason = None
-    external_evidence_present = (
-        external_evidence_batch is not None and external_evidence_batch.record_count > 0
-    )
-    external_evidence_false_alarm = (
-        external_evidence_batch.contains_false_alarm
-        if external_evidence_batch is not None
-        else False
-    )
-    external_evidence_role_labels = (
-        tuple(
-            sorted(
-                {
-                    record.role_label
-                    for record in external_evidence_batch.records
-                    if record.role_label is not None
-                }
-            )
-        )
-        if external_evidence_batch is not None
-        else ()
-    )
-    external_evidence_tool_used = False
-    external_evidence_corroboration_count = 0
-    external_evidence_changed_optimizer_input = None
-    external_evidence_fusion_cap_applied = False
-    corroboration_gate_applied = False
-    corroborated_family_change_allowed = False
-    proposed_external_strengthening = None
-    final_external_strengthening = None
-    external_evidence_fusion_cap_reason = None
-    corroboration_gate_reason = None
-    early_evidence_confirmation_gate_applied = False
-    early_evidence_family_change_blocked = False
-    proposed_external_update_requests: tuple[str, ...] = ()
-    final_external_update_requests: tuple[str, ...] = ()
-    early_evidence_confirmation_gate_reason = None
     if response is not None and response.agent_assessment is not None:
         predicted_regime_label = response.agent_assessment.regime_label.value
         confidence = response.agent_assessment.confidence
@@ -1194,50 +1099,6 @@ def _build_step_trace_record(
         )
         calibration_reason = response.llm_diagnostics.calibration_reason
         moderation_reason = response.llm_diagnostics.moderation_reason
-    if response is not None:
-        external_tool_traces = tuple(
-            trace for trace in response.tool_call_traces if trace.tool_id == EXTERNAL_EVIDENCE_TOOL_ID
-        )
-        external_evidence_tool_used = bool(external_tool_traces)
-        if external_tool_traces:
-            external_evidence_changed_optimizer_input = any(
-                trace.optimizer_input_changed is True for trace in external_tool_traces
-            )
-    fusion_summary = scenario_update_result.adjustment.external_evidence_fusion_summary
-    if fusion_summary is not None:
-        external_evidence_corroboration_count = fusion_summary.corroboration_count
-        external_evidence_fusion_cap_applied = fusion_summary.cap_applied
-        corroboration_gate_applied = fusion_summary.corroboration_gate_applied
-        corroborated_family_change_allowed = (
-            fusion_summary.corroborated_family_change_allowed
-        )
-        proposed_external_strengthening = {
-            "demand_outlook": fusion_summary.proposed_demand_outlook,
-            "leadtime_outlook": fusion_summary.proposed_leadtime_outlook,
-            "safety_buffer_scale": fusion_summary.proposed_safety_buffer_scale,
-        }
-        final_external_strengthening = {
-            "demand_outlook": fusion_summary.final_demand_outlook,
-            "leadtime_outlook": fusion_summary.final_leadtime_outlook,
-            "safety_buffer_scale": fusion_summary.final_safety_buffer_scale,
-        }
-        external_evidence_fusion_cap_reason = fusion_summary.reason
-        corroboration_gate_reason = fusion_summary.corroboration_gate_reason
-        if fusion_summary.role_labels:
-            external_evidence_role_labels = fusion_summary.role_labels
-        early_evidence_confirmation_gate_applied = (
-            fusion_summary.early_confirmation_gate_applied
-        )
-        early_evidence_family_change_blocked = fusion_summary.family_change_blocked
-        proposed_external_update_requests = tuple(
-            update_type.value for update_type in fusion_summary.proposed_update_request_types
-        )
-        final_external_update_requests = tuple(
-            update_type.value for update_type in fusion_summary.final_update_request_types
-        )
-        early_evidence_confirmation_gate_reason = (
-            fusion_summary.early_confirmation_gate_reason
-        )
     unavailable_tool_request = _unavailable_tool_request(response)
     disabled_tool_fallback = _disabled_tool_fallback(response)
     sequencing_blocked_tool_request_count = _sequencing_blocked_tool_request_count(
@@ -1252,9 +1113,6 @@ def _build_step_trace_record(
         selected_tools=period_record.agent_signal.tool_sequence,
         decision_changed_optimizer_input=decision_changed_optimizer_input,
     ) and not unavailable_tool_request and sequencing_blocked_tool_request_count == 0
-    external_evidence_supported_intervention = external_evidence_present and (
-        clean_intervention or external_evidence_tool_used
-    )
     optimizer_output_changed_state = _optimizer_output_changed_state(
         transition,
         zero_order_transition,
@@ -1312,30 +1170,6 @@ def _build_step_trace_record(
         unresolved_stress_moderation_applied=unresolved_stress_moderation_applied,
         calibration_reason=calibration_reason,
         moderation_reason=moderation_reason,
-        external_evidence_source=external_evidence_source,
-        external_evidence_present=external_evidence_present,
-        external_evidence_false_alarm=external_evidence_false_alarm,
-        external_evidence_tool_used=external_evidence_tool_used,
-        external_evidence_supported_intervention=external_evidence_supported_intervention,
-        external_evidence_role_labels=external_evidence_role_labels,
-        external_evidence_corroboration_count=external_evidence_corroboration_count,
-        external_evidence_changed_optimizer_input=external_evidence_changed_optimizer_input,
-        external_evidence_fusion_cap_applied=external_evidence_fusion_cap_applied,
-        corroboration_gate_applied=corroboration_gate_applied,
-        corroborated_family_change_allowed=corroborated_family_change_allowed,
-        proposed_external_strengthening=proposed_external_strengthening,
-        final_external_strengthening=final_external_strengthening,
-        external_evidence_fusion_cap_reason=external_evidence_fusion_cap_reason,
-        corroboration_gate_reason=corroboration_gate_reason,
-        early_evidence_confirmation_gate_applied=(
-            early_evidence_confirmation_gate_applied
-        ),
-        early_evidence_family_change_blocked=early_evidence_family_change_blocked,
-        proposed_external_update_requests=proposed_external_update_requests,
-        final_external_update_requests=final_external_update_requests,
-        early_evidence_confirmation_gate_reason=(
-            early_evidence_confirmation_gate_reason
-        ),
         validation_lane=VALIDATION_LANE,
     )
 
@@ -1349,8 +1183,6 @@ def _build_llm_call_trace_records(
     run_seed: int,
     period_index: int,
     response: OrchestrationResponse,
-    external_evidence_batch,
-    external_evidence_enabled: bool,
 ) -> tuple[LLMCallTraceRecord, ...]:
     if (
         response.llm_diagnostics is None
@@ -1413,10 +1245,6 @@ def _build_llm_call_trace_records(
             ),
             client_error_message=trace.client_error_message,
             failure_after_response=trace.failure_after_response,
-            external_evidence_present=bool(
-                external_evidence_batch is not None and external_evidence_batch.record_count > 0
-            ),
-            external_evidence_tool_available=external_evidence_enabled,
             validation_lane=VALIDATION_LANE,
         ),
     )
@@ -1591,111 +1419,6 @@ def _count_hysteresis_applications(
     step_trace_records: tuple[StepTraceRecord, ...],
 ) -> int:
     return sum(1 for record in step_trace_records if record.hysteresis_applied)
-
-
-def _count_external_evidence_periods(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> int:
-    return sum(1 for record in step_trace_records if record.external_evidence_present)
-
-
-def _count_false_alarm_evidence_periods(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> int:
-    return sum(1 for record in step_trace_records if record.external_evidence_false_alarm)
-
-
-def _count_evidence_supported_interventions(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> int:
-    return sum(
-        1 for record in step_trace_records if record.external_evidence_supported_intervention
-    )
-
-
-def _count_external_evidence_optimizer_input_changes(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> int:
-    return sum(
-        1
-        for record in step_trace_records
-        if record.external_evidence_changed_optimizer_input is True
-    )
-
-
-def _count_external_evidence_fusion_caps(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> int:
-    return sum(
-        1
-        for record in step_trace_records
-        if record.external_evidence_fusion_cap_applied
-    )
-
-
-def _count_capped_external_strengthening(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> int:
-    return sum(
-        1
-        for record in step_trace_records
-        if record.proposed_external_strengthening is not None
-        and record.final_external_strengthening is not None
-        and record.proposed_external_strengthening != record.final_external_strengthening
-    )
-
-
-def _count_early_evidence_confirmation_gates(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> int:
-    return sum(
-        1
-        for record in step_trace_records
-        if record.early_evidence_confirmation_gate_applied
-    )
-
-
-def _count_early_evidence_family_change_blocks(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> int:
-    return sum(
-        1
-        for record in step_trace_records
-        if record.early_evidence_family_change_blocked
-    )
-
-
-def _count_corroboration_gates(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> int:
-    return sum(1 for record in step_trace_records if record.corroboration_gate_applied)
-
-
-def _count_corroborated_family_changes(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> int:
-    return sum(
-        1 for record in step_trace_records if record.corroborated_family_change_allowed
-    )
-
-
-def _external_evidence_role_usage_counts(
-    step_trace_records: tuple[StepTraceRecord, ...],
-) -> tuple[tuple[str, int], ...]:
-    counter: Counter[str] = Counter()
-    for record in step_trace_records:
-        counter.update(record.external_evidence_role_labels)
-    return tuple(sorted(counter.items()))
-
-
-def _count_external_evidence_tool_calls(
-    tool_call_trace_records: tuple[ToolCallTraceRecord, ...],
-) -> int:
-    return sum(
-        1
-        for record in tool_call_trace_records
-        if record.tool_id == EXTERNAL_EVIDENCE_TOOL_ID
-    )
 
 
 def _sequencing_blocked_tool_request_count(
@@ -1886,12 +1609,6 @@ def _write_logging_artifacts(
             operational_metrics_gate_passed=(
                 mode_summary.validity_summary.operational_metrics_gate_passed
             ),
-            semi_synthetic_external_evidence=(
-                experiment_config.semi_synthetic_external_evidence
-            ),
-            external_evidence_source=_resolved_external_evidence_source(
-                experiment_config
-            ),
         )
         mode_governance_decisions.append(mode_governance)
         classified_mode_summaries.append(
@@ -1925,7 +1642,6 @@ def _write_logging_artifacts(
         validation_lane=VALIDATION_LANE,
         provider=_value_or_mixed_with_missing(provider_values),
         model_name=_value_or_mixed_with_missing(model_values),
-        external_evidence_source=_resolved_external_evidence_source(experiment_config),
         tool_ablation_variants=tool_ablation_variants,
         artifact_use_class=directory_governance.artifact_use_class,
         validity_gate_passed=directory_governance.validity_gate_passed,
@@ -1969,7 +1685,6 @@ def _write_logging_artifacts(
         tool_ablation_variants=tool_ablation_variants,
         provider=experiment_metadata.provider,
         model_name=experiment_metadata.model_name,
-        external_evidence_source=experiment_metadata.external_evidence_source,
         artifact_use_class=experiment_metadata.artifact_use_class,
         validity_gate_passed=experiment_metadata.validity_gate_passed,
         rollout_fidelity_gate_passed=experiment_metadata.rollout_fidelity_gate_passed,
@@ -2025,19 +1740,9 @@ def _run_orchestrated_rollout(
     mode: str,
 ) -> StockpylSerialRun:
     runtime, llm_provider = _build_runtime(agent_config, mode=mode)
-    external_evidence_enabled = _mode_enables_external_evidence(mode)
-    external_evidence_source = (
-        _resolved_external_evidence_source(experiment_config)
-        if external_evidence_enabled
-        else None
-    )
-    mission = _build_mission(
-        evaluation_case.tool_ablation_variant,
-        external_evidence_enabled=external_evidence_enabled,
-    )
+    mission = _build_mission(evaluation_case.tool_ablation_variant)
     candidate_tool_ids = _candidate_tool_ids_for_mode(
-        evaluation_case.tool_ablation_variant,
-        external_evidence_enabled=external_evidence_enabled,
+        evaluation_case.tool_ablation_variant
     )
     optimizer = TrustedOptimizerAdapter()
     episode_id = (
@@ -2069,17 +1774,9 @@ def _run_orchestrated_rollout(
             regime_label,
             previous_regime_label=previous_regime_label,
         )
-        external_evidence_batch = None
-        if external_evidence_enabled:
-            external_evidence_batch = _build_external_evidence_batch_for_period(
-                experiment_config=experiment_config,
-                evaluation_case=evaluation_case,
-                time_index=time_index,
-            )
         evidence = build_runtime_evidence(
             benchmark_case,
             observation,
-            external_evidence_batch=external_evidence_batch,
         )
         request = build_serial_orchestration_request(
             case=benchmark_case,
@@ -2191,8 +1888,6 @@ def _run_orchestrated_rollout(
                 cost_config=benchmark_case.benchmark_config.costs,
                 holding_cost_by_stage=benchmark_case.holding_costs,
                 stockout_cost_by_stage=benchmark_case.stockout_costs,
-                external_evidence_source=external_evidence_source,
-                external_evidence_batch=external_evidence_batch,
             )
         )
         llm_call_trace_records.extend(
@@ -2204,8 +1899,6 @@ def _run_orchestrated_rollout(
                 run_seed=evaluation_case.run_seed,
                 period_index=time_index,
                 response=response,
-                external_evidence_batch=external_evidence_batch,
-                external_evidence_enabled=external_evidence_enabled,
             )
         )
         tool_call_trace_records.extend(
@@ -2301,41 +1994,6 @@ def _run_orchestrated_rollout(
         ),
         moderated_update_count=_count_moderated_updates(tuple(step_trace_records)),
         hysteresis_application_count=_count_hysteresis_applications(
-            tuple(step_trace_records)
-        ),
-        external_evidence_source=external_evidence_source,
-        external_evidence_period_count=_count_external_evidence_periods(
-            tuple(step_trace_records)
-        ),
-        external_evidence_tool_call_count=_count_external_evidence_tool_calls(
-            tuple(tool_call_trace_records)
-        ),
-        false_alarm_evidence_count=_count_false_alarm_evidence_periods(
-            tuple(step_trace_records)
-        ),
-        evidence_supported_intervention_count=_count_evidence_supported_interventions(
-            tuple(step_trace_records)
-        ),
-        external_evidence_changed_optimizer_input_count=(
-            _count_external_evidence_optimizer_input_changes(tuple(step_trace_records))
-        ),
-        evidence_fusion_cap_count=_count_external_evidence_fusion_caps(
-            tuple(step_trace_records)
-        ),
-        capped_external_strengthening_count=_count_capped_external_strengthening(
-            tuple(step_trace_records)
-        ),
-        early_evidence_confirmation_gate_count=(
-            _count_early_evidence_confirmation_gates(tuple(step_trace_records))
-        ),
-        early_evidence_family_change_block_count=(
-            _count_early_evidence_family_change_blocks(tuple(step_trace_records))
-        ),
-        corroboration_gate_count=_count_corroboration_gates(tuple(step_trace_records)),
-        corroborated_family_change_count=_count_corroborated_family_changes(
-            tuple(step_trace_records)
-        ),
-        role_level_usage_counts=_external_evidence_role_usage_counts(
             tuple(step_trace_records)
         ),
         rollout_fidelity_gate_passed=_rollout_fidelity_gate_passed(trace, benchmark_case),
@@ -2540,8 +2198,6 @@ def _run_baseline_rollout(
                 cost_config=benchmark_case.benchmark_config.costs,
                 holding_cost_by_stage=benchmark_case.holding_costs,
                 stockout_cost_by_stage=benchmark_case.stockout_costs,
-                external_evidence_source=None,
-                external_evidence_batch=None,
             )
         )
         system_state = transition.next_state
@@ -2595,19 +2251,6 @@ def _run_baseline_rollout(
         hysteresis_application_count=_count_hysteresis_applications(
             tuple(step_trace_records)
         ),
-        external_evidence_source=None,
-        external_evidence_period_count=0,
-        external_evidence_tool_call_count=0,
-        false_alarm_evidence_count=0,
-        evidence_supported_intervention_count=0,
-        external_evidence_changed_optimizer_input_count=0,
-        evidence_fusion_cap_count=0,
-        capped_external_strengthening_count=0,
-        early_evidence_confirmation_gate_count=0,
-        early_evidence_family_change_block_count=0,
-        corroboration_gate_count=0,
-        corroborated_family_change_count=0,
-        role_level_usage_counts=(),
         rollout_fidelity_gate_passed=_rollout_fidelity_gate_passed(trace, benchmark_case),
         operational_metrics_gate_passed=_operational_metrics_gate_passed(
             summary,
@@ -2705,8 +2348,6 @@ def _classify_mode_aggregate_summary(
     experiment_name: str,
     benchmark_source: str,
     provider: str | None,
-    semi_synthetic_external_evidence: bool = False,
-    external_evidence_source: str | None = None,
 ) -> ModeAggregateSummary:
     governance = classify_artifact_governance(
         experiment_name=experiment_name,
@@ -2725,8 +2366,6 @@ def _classify_mode_aggregate_summary(
         operational_metrics_gate_passed=(
             aggregate_metrics.validity_summary.operational_metrics_gate_passed
         ),
-        semi_synthetic_external_evidence=semi_synthetic_external_evidence,
-        external_evidence_source=external_evidence_source,
     )
     return replace(
         aggregate_metrics,
@@ -2742,8 +2381,6 @@ def _classify_batch_aggregate_summary(
     experiment_name: str,
     benchmark_source: str,
     provider_by_mode: dict[str, str | None],
-    semi_synthetic_external_evidence: bool = False,
-    external_evidence_source: str | None = None,
 ) -> BatchAggregateSummary:
     classified_mode_summaries = []
     decisions = []
@@ -2753,8 +2390,6 @@ def _classify_batch_aggregate_summary(
             experiment_name=experiment_name,
             benchmark_source=benchmark_source,
             provider=provider_by_mode.get(mode_summary.mode),
-            semi_synthetic_external_evidence=semi_synthetic_external_evidence,
-            external_evidence_source=external_evidence_source,
         )
         classified_mode_summaries.append(classified_mode_summary)
         decisions.append(
@@ -2769,8 +2404,6 @@ def _classify_batch_aggregate_summary(
                 operational_metrics_gate_passed=(
                     classified_mode_summary.validity_summary.operational_metrics_gate_passed
                 ),
-                semi_synthetic_external_evidence=semi_synthetic_external_evidence,
-                external_evidence_source=external_evidence_source,
             )
         )
     directory_governance = summarize_directory_governance(tuple(decisions))
@@ -2788,8 +2421,6 @@ def _classify_mode_batch(
     *,
     experiment_name: str,
     benchmark_source: str,
-    semi_synthetic_external_evidence: bool = False,
-    external_evidence_source: str | None = None,
 ) -> StockpylSerialModeBatch:
     if batch.aggregate_metrics is None:
         return batch
@@ -2799,8 +2430,6 @@ def _classify_mode_batch(
         experiment_name=experiment_name,
         benchmark_source=benchmark_source,
         provider=provider,
-        semi_synthetic_external_evidence=semi_synthetic_external_evidence,
-        external_evidence_source=external_evidence_source,
     )
     return replace(batch, aggregate_metrics=classified_metrics)
 
@@ -2991,8 +2620,6 @@ def run_stockpyl_serial_mode_sweep(
             )
             for batch in mode_batches
         },
-        semi_synthetic_external_evidence=experiment_config.semi_synthetic_external_evidence,
-        external_evidence_source=_resolved_external_evidence_source(experiment_config),
     )
     return StockpylSerialModeSweep(
         benchmark_case=benchmark_case,
@@ -3081,8 +2708,6 @@ def run_stockpyl_serial_batch(
         _build_mode_batch(mode, runs),
         experiment_name=experiment_config.experiment_name,
         benchmark_source=benchmark_case.adapter_name,
-        semi_synthetic_external_evidence=experiment_config.semi_synthetic_external_evidence,
-        external_evidence_source=_resolved_external_evidence_source(experiment_config),
     )
 
 
@@ -3276,8 +2901,6 @@ def main() -> None:
             "deterministic_baseline",
             "deterministic_orchestrator",
             "llm_orchestrator",
-            "llm_orchestrator_internal_only",
-            "llm_orchestrator_with_external_evidence",
             "orchestration_agent",
         ),
         default="all",

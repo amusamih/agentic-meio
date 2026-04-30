@@ -1,7 +1,6 @@
 """Scenario generation and uncertainty update logic."""
 
 from meio.scenarios.contracts import (
-    ExternalEvidenceFusionSummary,
     ScenarioAdjustmentSummary,
     ScenarioSummary,
     ScenarioUpdateRequest,
@@ -24,7 +23,6 @@ from meio.scenarios.update_policy import (
 
 __all__ = [
     "ORDERED_UPDATE_LADDER",
-    "ExternalEvidenceFusionSummary",
     "ScenarioAdjustmentSummary",
     "ScenarioSummary",
     "ScenarioUpdateRequest",

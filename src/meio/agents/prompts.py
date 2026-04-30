@@ -8,7 +8,7 @@ import hashlib
 from meio.agents.llm_client import LLMClientContext, LLMMessage
 from meio.contracts import OperationalSubgoal, RegimeLabel, ToolSpec, UpdateRequestType
 
-PROMPT_VERSION = "meio.llm_orchestrator.v8"
+PROMPT_VERSION = "meio.llm_orchestrator.v9"
 
 
 def build_system_prompt() -> str:
@@ -46,13 +46,6 @@ def build_user_prompt(
     decision_signals = _build_decision_signals(context)
     decision_guidance = _build_decision_guidance(context.available_tool_ids)
     few_shot_examples = _build_few_shot_examples(context.available_tool_ids)
-    external_evidence_guidance = ""
-    if "external_evidence_tool" in context.available_tool_ids:
-        external_evidence_guidance = (
-            " If semi-synthetic external evidence is present, treat it as extra uncertainty "
-            "context and use the bounded external evidence tool when that context should "
-            "influence planning."
-        )
     return (
         "Decision context:\n"
         f"- benchmark_id: {context.benchmark_id}\n"
@@ -69,7 +62,7 @@ def build_user_prompt(
         "If intervention is not justified, prefer `no_action` or `abstain` rather than "
         "inventing an intervention. "
         "If demand or lead-time signals materially depart from baseline and planning inputs "
-        f"should change, do not hide that by returning normal plus no_action.{external_evidence_guidance} "
+        "should change, do not hide that by returning normal plus no_action. "
         "If stress is repeated without worsening, or recovery is already carrying heavy prior "
         "load, do not escalate just because the regime label is non-normal."
     )
@@ -212,23 +205,6 @@ def _build_decision_signals(context: LLMClientContext) -> str:
         for name, value in boolean_pairs
         if value is not None
     )
-    if context.external_evidence_present is not None:
-        lines.append(
-            f"- external_evidence_present: {str(context.external_evidence_present).lower()}"
-        )
-    if context.external_evidence_source_count is not None:
-        lines.append(
-            f"- external_evidence_source_count: {context.external_evidence_source_count}"
-        )
-    if context.external_evidence_false_alarm_present is not None:
-        lines.append(
-            "- external_evidence_false_alarm_present: "
-            f"{str(context.external_evidence_false_alarm_present).lower()}"
-        )
-    lines.extend(
-        f"- external_evidence_summary: {summary}"
-        for summary in context.external_evidence_summaries
-    )
     return "\n".join(lines)
 
 
@@ -258,16 +234,6 @@ def _build_decision_guidance(available_tool_ids: tuple[str, ...]) -> str:
         "- If no suitable bounded tool is available in this ablation condition, prefer `request_replan` with `candidate_tool_ids: []` or a justified `no_action`, rather than naming a missing tool.\n"
         "- Use `keep_current` only when no planning change is justified."
     )
-    if "external_evidence_tool" in available_tool_ids:
-        guidance += (
-            "\n- If external evidence is present and could materially clarify early, delayed, "
-            "false-alarm, or relapse risk, call `external_evidence_tool` before translating that "
-            "evidence into bounded update pressure.\n"
-            "- Treat external evidence as exogenous uncertainty context only. It never authorizes "
-            "raw control actions and it should not replace the optimizer.\n"
-            "- False-alarm external evidence can justify caution, inspection, or keep_current, "
-            "rather than reflexive escalation."
-        )
     return guidance
 
 

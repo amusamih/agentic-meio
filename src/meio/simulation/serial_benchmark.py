@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from meio.agents.runtime import OrchestrationRequest
 from meio.config.schemas import BenchmarkConfig, CostConfig, SerialStageConfig, SerialSystemConfig
@@ -18,9 +17,6 @@ from meio.contracts import (
 from meio.data.stockpyl_adapter import StockpylSerialAdapter, StockpylSerialInstance
 from meio.simulation.evidence import DemandEvidence, LeadTimeEvidence, RuntimeEvidence
 from meio.simulation.state import Observation, SimulationState
-
-if TYPE_CHECKING:
-    from meio.data.external_evidence import ExternalEvidenceBatch
 
 DEFAULT_SERIAL_ECHELON_COUNT = 3
 FUTURE_READY_SERIAL_ECHELON_COUNTS = frozenset({3, 5})
@@ -295,8 +291,6 @@ def build_period_observation(
 def build_runtime_evidence(
     case: SerialBenchmarkCase,
     observation: Observation,
-    *,
-    external_evidence_batch: "ExternalEvidenceBatch | None" = None,
 ) -> RuntimeEvidence:
     """Build the typed combined runtime evidence envelope for the serial path."""
 
@@ -307,7 +301,6 @@ def build_runtime_evidence(
         scenario_families=case.stockpyl_instance.scenario_families,
         demand_baseline_value=float(case.stockpyl_instance.demand_mean),
         leadtime_baseline_value=float(case.stockpyl_instance.primary_inbound_lead_time),
-        external_evidence_batch=external_evidence_batch,
         notes=(case.milestone_notes, case.adapter_name),
     )
 

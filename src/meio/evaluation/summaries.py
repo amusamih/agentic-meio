@@ -167,19 +167,6 @@ def build_episode_summary_record(
     unresolved_stress_moderation_count: int = 0,
     moderated_update_count: int = 0,
     hysteresis_application_count: int = 0,
-    external_evidence_source: str | None = None,
-    external_evidence_period_count: int = 0,
-    external_evidence_tool_call_count: int = 0,
-    false_alarm_evidence_count: int = 0,
-    evidence_supported_intervention_count: int = 0,
-    external_evidence_changed_optimizer_input_count: int = 0,
-    evidence_fusion_cap_count: int = 0,
-    capped_external_strengthening_count: int = 0,
-    early_evidence_confirmation_gate_count: int = 0,
-    early_evidence_family_change_block_count: int = 0,
-    corroboration_gate_count: int = 0,
-    corroborated_family_change_count: int = 0,
-    role_level_usage_counts: tuple[tuple[str, int], ...] = (),
     rollout_fidelity_gate_passed: bool = False,
     operational_metrics_gate_passed: bool = False,
 ) -> EpisodeSummaryRecord:
@@ -303,21 +290,6 @@ def build_episode_summary_record(
         unresolved_stress_moderation_count=unresolved_stress_moderation_count,
         moderated_update_count=moderated_update_count,
         hysteresis_application_count=hysteresis_application_count,
-        external_evidence_source=external_evidence_source,
-        external_evidence_period_count=external_evidence_period_count,
-        external_evidence_tool_call_count=external_evidence_tool_call_count,
-        false_alarm_evidence_count=false_alarm_evidence_count,
-        evidence_supported_intervention_count=evidence_supported_intervention_count,
-        external_evidence_changed_optimizer_input_count=(
-            external_evidence_changed_optimizer_input_count
-        ),
-        evidence_fusion_cap_count=evidence_fusion_cap_count,
-        capped_external_strengthening_count=capped_external_strengthening_count,
-        early_evidence_confirmation_gate_count=early_evidence_confirmation_gate_count,
-        early_evidence_family_change_block_count=early_evidence_family_change_block_count,
-        corroboration_gate_count=corroboration_gate_count,
-        corroborated_family_change_count=corroborated_family_change_count,
-        role_level_usage_counts=role_level_usage_counts,
     )
 
 

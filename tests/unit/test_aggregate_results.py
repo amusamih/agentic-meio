@@ -41,13 +41,6 @@ def _episode_record(
     unresolved_stress_moderation_count: int = 0,
     moderated_update_count: int = 0,
     hysteresis_application_count: int = 0,
-    evidence_fusion_cap_count: int = 0,
-    capped_external_strengthening_count: int = 0,
-    early_evidence_confirmation_gate_count: int = 0,
-    early_evidence_family_change_block_count: int = 0,
-    corroboration_gate_count: int = 0,
-    corroborated_family_change_count: int = 0,
-    role_level_usage_counts: tuple[tuple[str, int], ...] = (),
 ) -> EpisodeSummaryRecord:
     return EpisodeSummaryRecord(
         episode_id=episode_id,
@@ -106,13 +99,6 @@ def _episode_record(
         unresolved_stress_moderation_count=unresolved_stress_moderation_count,
         moderated_update_count=moderated_update_count,
         hysteresis_application_count=hysteresis_application_count,
-        evidence_fusion_cap_count=evidence_fusion_cap_count,
-        capped_external_strengthening_count=capped_external_strengthening_count,
-        early_evidence_confirmation_gate_count=early_evidence_confirmation_gate_count,
-        early_evidence_family_change_block_count=early_evidence_family_change_block_count,
-        corroboration_gate_count=corroboration_gate_count,
-        corroborated_family_change_count=corroborated_family_change_count,
-        role_level_usage_counts=role_level_usage_counts,
     )
 
 
@@ -235,48 +221,6 @@ def test_aggregate_batch_episode_summaries_groups_records_by_mode() -> None:
     assert batch_summary.artifact_use_class.value == "internal_only"
     assert batch_summary.validity_gate_passed is False
     assert batch_summary.schema_version.startswith("meio.experiment_log.")
-
-
-def test_aggregate_mode_episode_summaries_include_external_evidence_cap_counts() -> None:
-    records = (
-        _episode_record(
-            episode_id="external_0",
-            mode="llm_orchestrator_with_external_evidence",
-            schedule_name="double_shift_with_gap",
-            run_seed=20260417,
-            total_cost=320.0,
-            fill_rate=1.0,
-            no_action_count=1,
-            replan_count=2,
-            intervention_count=2,
-            tool_call_count=4,
-            total_tokens=4200,
-            total_llm_latency_ms=7000.0,
-            evidence_fusion_cap_count=2,
-            capped_external_strengthening_count=2,
-            early_evidence_confirmation_gate_count=1,
-            early_evidence_family_change_block_count=1,
-            corroboration_gate_count=1,
-            corroborated_family_change_count=2,
-            role_level_usage_counts=(("leading_demand_shift", 2),),
-        ),
-    )
-
-    summary = aggregate_mode_episode_summaries(
-        "llm_orchestrator_with_external_evidence",
-        records,
-    )
-
-    assert summary.external_evidence_summary is not None
-    assert summary.external_evidence_summary.evidence_fusion_cap_count == 2
-    assert summary.external_evidence_summary.capped_external_strengthening_count == 2
-    assert summary.external_evidence_summary.early_evidence_confirmation_gate_count == 1
-    assert summary.external_evidence_summary.early_evidence_family_change_block_count == 1
-    assert summary.external_evidence_summary.corroboration_gate_count == 1
-    assert summary.external_evidence_summary.corroborated_family_change_count == 2
-    assert summary.external_evidence_summary.role_level_usage_counts == (
-        ("leading_demand_shift", 2),
-    )
 
 
 def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_breakdown() -> None:

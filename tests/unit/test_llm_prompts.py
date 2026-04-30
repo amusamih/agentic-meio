@@ -189,6 +189,6 @@ def test_prompt_contract_metadata_is_stable_and_versioned() -> None:
     first_hash = prompt_contract_hash()
     second_hash = prompt_contract_hash()
 
-    assert PROMPT_VERSION == "meio.llm_orchestrator.v8"
+    assert PROMPT_VERSION == "meio.llm_orchestrator.v9"
     assert first_hash == second_hash
     assert len(first_hash) == 64
