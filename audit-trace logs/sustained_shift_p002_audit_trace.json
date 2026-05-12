@@ -1,0 +1,173 @@
+{
+  "trace_id": "sustained_shift_p002",
+  "source_run": {
+    "validation_lane": "controlled_internal_simulation",
+    "experiment_id": "audit_trace_v9_llm_orchestrator",
+    "run_group_id": "audit_trace_v9_llm_orchestrator_20260512T080928Z",
+    "episode_id": "audit_trace_v9_llm_orchestrator_full_sustained_shift_seed_20260417_run_0",
+    "schedule_name": "sustained_shift",
+    "run_seed": 20260417,
+    "period_index": 2,
+    "source_log_files": [
+      "experiment_metadata.json",
+      "llm_call_traces.jsonl",
+      "step_traces.jsonl",
+      "tool_call_traces.jsonl"
+    ]
+  },
+  "llm_configuration": {
+    "provider": "openai",
+    "model_name": "gpt-4o-mini",
+    "prompt_version": "meio.llm_orchestrator.v9",
+    "prompt_contract_hash": "0c50f202fb52c0d597c957dd6bc1ac8b45438ec5b40edf1955bbaba1d3faf3a2",
+    "prompt_text_hash": "694977f08aff470a794b04e81c07e47681bb04d8e1df1ee9c92658859d02c4ec"
+  },
+  "operating_evidence": {
+    "demand_realization": 14.0,
+    "leadtime_realization": 2.0,
+    "inventory_by_echelon": [0.0, 0.0, 7.247464],
+    "backorders_by_echelon": [4.0, 0.0, 0.0],
+    "pipeline_by_echelon": [30.0, 32.752536, 43.670048],
+    "true_regime_label": "demand_regime_shift"
+  },
+  "orchestration_output": {
+    "selected_subgoal": "query_uncertainty",
+    "candidate_tool_ids": [
+      "forecast_tool",
+      "leadtime_tool",
+      "scenario_tool"
+    ],
+    "regime_label": "demand_regime_shift",
+    "confidence": 0.86,
+    "update_request_types": [
+      "switch_demand_regime",
+      "widen_uncertainty"
+    ],
+    "request_replan": true,
+    "rationale": "Demand materially exceeds baseline and the available bounded tools should be used in sequence before replanning."
+  },
+  "tool_call_traces": [
+    {
+      "tool_id": "forecast_tool",
+      "success": true,
+      "input_summary": {
+        "demand_realization": [14.0],
+        "leadtime_realization": [2.0],
+        "inventory": [0.0, 0.0, 7.247464],
+        "backlog": [4.0, 0.0, 0.0],
+        "pipeline": [30.0, 32.752536, 43.670048],
+        "observed_regime_label": "demand_regime_shift",
+        "subgoal": "query_uncertainty",
+        "prior_tool_ids": []
+      },
+      "output_summary": {
+        "point_forecast": [14.0, 14.0],
+        "uncertainty_scale": [1.4, 1.4],
+        "next_tool_id": "leadtime_tool"
+      },
+      "decision_changed": false,
+      "optimizer_input_changed": false
+    },
+    {
+      "tool_id": "leadtime_tool",
+      "success": true,
+      "input_summary": {
+        "demand_realization": [14.0],
+        "leadtime_realization": [2.0],
+        "inventory": [0.0, 0.0, 7.247464],
+        "backlog": [4.0, 0.0, 0.0],
+        "pipeline": [30.0, 32.752536, 43.670048],
+        "observed_regime_label": "demand_regime_shift",
+        "subgoal": "query_uncertainty",
+        "prior_tool_ids": ["forecast_tool"]
+      },
+      "output_summary": {
+        "expected_lead_time": [2.0, 2.0],
+        "uncertainty_scale": [0.25, 0.25],
+        "next_tool_id": "scenario_tool"
+      },
+      "decision_changed": true,
+      "optimizer_input_changed": false
+    },
+    {
+      "tool_id": "scenario_tool",
+      "success": true,
+      "input_summary": {
+        "demand_realization": [14.0],
+        "leadtime_realization": [2.0],
+        "inventory": [0.0, 0.0, 7.247464],
+        "backlog": [4.0, 0.0, 0.0],
+        "pipeline": [30.0, 32.752536, 43.670048],
+        "observed_regime_label": "demand_regime_shift",
+        "subgoal": "update_uncertainty",
+        "prior_tool_ids": ["forecast_tool", "leadtime_tool"]
+      },
+      "output_summary": {
+        "adjustment": {
+          "demand_outlook": 15.862,
+          "leadtime_outlook": 2.0,
+          "safety_buffer_scale": 1.071
+        },
+        "applied_update_types": ["reweight_scenarios"],
+        "request_replan": true,
+        "scenario": {
+          "scenario_id": "serial_smoke",
+          "demand_scale": 1.133,
+          "leadtime_scale": 1.0,
+          "regime_label": "demand_regime_shift",
+          "weight": 1.0
+        }
+      },
+      "pre_tool_optimizer_input": {
+        "demand": 14.0,
+        "leadtime": 2.0,
+        "safety_buffer_scale": 1.0
+      },
+      "post_tool_optimizer_input": {
+        "demand": 15.862,
+        "leadtime": 2.0,
+        "safety_buffer_scale": 1.071
+      },
+      "decision_changed": true,
+      "optimizer_input_changed": true
+    }
+  ],
+  "validation_and_calibration": {
+    "invalid_output": false,
+    "fallback_used": false,
+    "calibration_applied": true,
+    "hysteresis_applied": true,
+    "calibration_reason": "repeated_stress_not_materially_worsening",
+    "proposed_update_strength": "switch_demand_regime_plus_widen_uncertainty",
+    "final_update_strength": "reweight_scenarios",
+    "final_update_request_types": ["reweight_scenarios"]
+  },
+  "protected_handoff": {
+    "final_scenario_update": {
+      "demand_outlook": 15.862,
+      "leadtime_outlook": 2.0,
+      "safety_buffer_scale": 1.071
+    },
+    "downstream_scenario_input_changed": true
+  },
+  "trusted_decision_output": {
+    "replenishment_requests": [11.976404, 18.21207, 17.035296]
+  },
+  "period_outcome": {
+    "per_period_cost": 113.611885,
+    "per_period_fill_rate": 0.0,
+    "optimizer_output_changed_state": true,
+    "clean_intervention": true
+  },
+  "runtime_telemetry": {
+    "prompt_tokens": 2173,
+    "completion_tokens": 108,
+    "latency_ms": 7611.2762,
+    "retries": 0
+  },
+  "manuscript_table_mapping": {
+    "table_label": "tab:audited_decision_trace",
+    "caption_trace_case": "Sustained shift",
+    "displayed_trace_identifier": "sustained_shift_p002"
+  }
+}
