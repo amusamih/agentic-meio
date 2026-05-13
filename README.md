@@ -1,10 +1,14 @@
-# MEIO
+# An Agentic AI Approach for Multi-Echelon Inventory Control Under Uncertainty
 
-MEIO studies bounded agentic uncertainty management for stochastic
-multi-echelon inventory control. The core design keeps adaptive uncertainty
-reasoning above a trusted downstream replenishment rule: the Agentic AI layer
-may diagnose regimes, use bounded tools, and propose scenario inputs, but it
-does not emit raw replenishment orders.
+This repository contains the implementation and experiment pipeline for the
+paper "An Agentic AI Approach for Multi-Echelon Inventory Control Under
+Uncertainty." The paper studies bounded agentic uncertainty management for
+stochastic multi-echelon inventory control.
+
+The core design keeps adaptive uncertainty reasoning above a trusted downstream
+replenishment rule. The Agentic AI layer may diagnose regimes, use bounded
+tools, and propose scenario inputs, but it does not emit raw replenishment
+orders.
 
 The implementation centers on a regret-guarded, risk-sensitive Agentic AI
 system evaluated against deterministic, robust, and rolling-horizon
