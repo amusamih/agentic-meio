@@ -10,7 +10,18 @@ from meio.agents.llm_client import FakeLLMClient, OpenAILLMClient
 from meio.agents.llm_orchestrator import LLMOrchestrator
 from meio.agents.prompts import PROMPT_VERSION, prompt_contract_hash
 from meio.agents.runtime import OrchestrationResponse, OrchestrationRuntime, RuntimeMode
+from meio.agents.scenario_planner import (
+    CounterfactualRegretGuardTool,
+    RegimeBeliefTool,
+    RegimeDiagnosisTool,
+    RiskSensitiveScenarioEvaluatorTool,
+    ScenarioCandidateGeneratorTool,
+)
 from meio.agents.telemetry import summarize_episode_telemetry
+from meio.agents.uncertainty_baselines import (
+    build_uncertainty_policy,
+    is_uncertainty_policy_mode,
+)
 from meio.config.loaders import (
     load_agent_config,
     load_benchmark_config,
@@ -21,6 +32,7 @@ from meio.config.schemas import (
     AgentConfig,
     RealDemandBacktestConfig,
     RealDemandBacktestPanelConfig,
+    UncertaintyBaselineConfig,
 )
 from meio.contracts import MissionSpec, OperationalSubgoal, RegimeLabel, UpdateRequestType
 from meio.data.real_demand_loader import (
@@ -76,11 +88,8 @@ from meio.evaluation.summaries import (
     summarize_interventions,
     summarize_traces,
 )
-from meio.forecasting.adapters import DeterministicForecastTool
-from meio.leadtime.adapters import DeterministicLeadTimeTool
 from meio.optimization.adapters import TrustedOptimizerAdapter, build_optimization_request
 from meio.optimization.contracts import OptimizationRequest, OptimizationResult
-from meio.scenarios.adapters import DeterministicScenarioTool
 from meio.scenarios.contracts import (
     ScenarioAdjustmentSummary,
     ScenarioSummary,
@@ -97,6 +106,16 @@ from meio.simulation.state import EpisodeTrace, Observation, PeriodTraceRecord, 
 
 
 VALIDATION_LANE = "real_demand_backtest"
+REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE = (
+    "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"
+)
+REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS = (
+    "regime_diagnosis_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+    "counterfactual_regret_guard_tool",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,13 +533,25 @@ def _run_mode_backtest(
     window: BacktestWindow,
     mode_name: str,
 ) -> DemandBacktestRun:
-    mission = _build_mission()
+    mission = _build_mission(mode_name)
     runtime: OrchestrationRuntime | None = None
     llm_provider: str | None = None
-    if mode_name != "deterministic_baseline":
-        runtime, llm_provider = _build_runtime(agent_config, mode=mode_name)
+    if mode_name != "deterministic_baseline" and not is_uncertainty_policy_mode(mode_name):
+        runtime, llm_provider = _build_runtime(
+            agent_config,
+            mode=mode_name,
+            benchmark_case=benchmark_case,
+            uncertainty_config=config.uncertainty_baselines,
+        )
     optimizer = TrustedOptimizerAdapter()
     baseline_policy = DeterministicBaselinePolicy()
+    uncertainty_policy = None
+    if is_uncertainty_policy_mode(mode_name):
+        uncertainty_policy = build_uncertainty_policy(
+            mode_name,
+            robust_config=config.uncertainty_baselines.robust_policy,
+            rolling_config=config.uncertainty_baselines.scenario_rolling_horizon_policy,
+        )
     system_state = build_initial_simulation_state(benchmark_case, regime_label=RegimeLabel.NORMAL)
     records: list[PeriodTraceRecord] = []
     step_trace_records: list[StepTraceRecord] = []
@@ -600,10 +631,21 @@ def _run_mode_backtest(
             notes=(dataset.dataset_name, dataset.dates[absolute_index]),
         )
         response: OrchestrationResponse | None = None
+        policy_diagnostics: dict[str, object] | None = None
         if mode_name == "deterministic_baseline":
             decision = baseline_policy.decide(system_state, observation, evidence)
             scenario_update_result = decision.scenario_update_result
             agent_signal = decision.signal
+        elif uncertainty_policy is not None:
+            decision = uncertainty_policy.decide(
+                system_state,
+                observation,
+                evidence,
+                benchmark_case,
+            )
+            scenario_update_result = decision.scenario_update_result
+            agent_signal = decision.signal
+            policy_diagnostics = decision.diagnostics
         else:
             request = _build_orchestration_request(
                 mission=mission,
@@ -727,6 +769,7 @@ def _run_mode_backtest(
                 transition=transition,
                 zero_order_transition=zero_order_transition,
                 cost_config=benchmark_case.benchmark_config.costs,
+                policy_diagnostics=policy_diagnostics,
             )
         )
         system_state = transition.next_state
@@ -799,9 +842,24 @@ def _run_mode_backtest(
         tool_call_trace_records=tuple(tool_call_trace_records),
         orchestration_responses=tuple(responses),
         llm_provider=llm_provider,
-        llm_model_name=(agent_config.llm_model_name if mode_name == "llm_orchestrator" else None),
-        prompt_version=(PROMPT_VERSION if mode_name == "llm_orchestrator" else None),
-        prompt_hash=(prompt_contract_hash() if mode_name == "llm_orchestrator" else None),
+        llm_model_name=(
+            agent_config.llm_model_name
+            if mode_name
+            == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE
+            else None
+        ),
+        prompt_version=(
+            PROMPT_VERSION
+            if mode_name
+            == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE
+            else None
+        ),
+        prompt_hash=(
+            prompt_contract_hash()
+            if mode_name
+            == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE
+            else None
+        ),
     )
 
 
@@ -831,14 +889,22 @@ def _build_single_dataset_summary(batch: DemandBacktestBatch) -> dict[str, objec
     }
 
 
-def _build_mission() -> MissionSpec:
+def _tool_ids_for_mode(mode: str) -> tuple[str, ...]:
+    if mode == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE:
+        return REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS
+    return ()
+
+
+def _build_mission(
+    mode: str = REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
+) -> MissionSpec:
     return MissionSpec(
         mission_id="real_demand_backtest",
         objective=(
             "Inspect bounded real-demand evidence, manage uncertainty conservatively, "
             "and keep replenishment orders inside the trusted optimizer boundary."
         ),
-        admissible_tool_ids=("forecast_tool", "leadtime_tool", "scenario_tool"),
+        admissible_tool_ids=_tool_ids_for_mode(mode),
     )
 
 
@@ -846,15 +912,25 @@ def _build_runtime(
     agent_config: AgentConfig,
     *,
     mode: str,
+    benchmark_case: SerialBenchmarkCase,
+    uncertainty_config: UncertaintyBaselineConfig,
 ) -> tuple[OrchestrationRuntime, str | None]:
-    tools = (
-        DeterministicForecastTool(),
-        DeterministicLeadTimeTool(),
-        DeterministicScenarioTool(),
+    regret_guarded_risk_sensitive_scenario_planner_tools = (
+        RegimeDiagnosisTool(),
+        RegimeBeliefTool(),
+        ScenarioCandidateGeneratorTool(
+            benchmark_case=benchmark_case,
+            robust_config=uncertainty_config.robust_policy,
+            rolling_config=uncertainty_config.scenario_rolling_horizon_policy,
+        ),
+        RiskSensitiveScenarioEvaluatorTool(
+            benchmark_case=benchmark_case,
+            rolling_config=uncertainty_config.scenario_rolling_horizon_policy,
+        ),
+        CounterfactualRegretGuardTool(),
     )
-    if mode == "deterministic_orchestrator":
-        return OrchestrationRuntime(agent_config=agent_config, tools=tools), None
-    if mode == "llm_orchestrator":
+    if mode == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE:
+        tools = regret_guarded_risk_sensitive_scenario_planner_tools
         client_mode = "real" if agent_config.llm_client_mode == "openai" else agent_config.llm_client_mode
         if client_mode == "real":
             client = OpenAILLMClient(
@@ -969,6 +1045,7 @@ def _build_step_trace_record(
     transition,
     zero_order_transition,
     cost_config,
+    policy_diagnostics: dict[str, object] | None = None,
 ) -> StepTraceRecord:
     predicted_regime_label = None
     confidence = None
@@ -1015,6 +1092,7 @@ def _build_step_trace_record(
             transition,
             zero_order_transition,
         ),
+        policy_diagnostics=policy_diagnostics,
         validation_lane=VALIDATION_LANE,
     )
 
@@ -1223,11 +1301,15 @@ def _build_real_demand_panel_batch(
         for batch in successful_batches
         for run in batch.runs
     )
+    observed_modes = {run.mode for run in runs}
+    mode_names = tuple(
+        mode_name for mode_name in panel_config.mode_set if mode_name in observed_modes
+    ) + tuple(sorted(observed_modes.difference(panel_config.mode_set)))
     records_by_mode = {
         mode_name: tuple(
             run.episode_summary_record for run in runs if run.mode == mode_name
         )
-        for mode_name in panel_config.mode_set
+        for mode_name in mode_names
     }
     step_records_by_mode = {
         mode_name: tuple(
@@ -1236,7 +1318,7 @@ def _build_real_demand_panel_batch(
             if run.mode == mode_name
             for record in run.step_trace_records
         )
-        for mode_name in panel_config.mode_set
+        for mode_name in mode_names
     }
     tool_call_records_by_mode = {
         mode_name: tuple(
@@ -1245,7 +1327,7 @@ def _build_real_demand_panel_batch(
             if run.mode == mode_name
             for record in run.tool_call_trace_records
         )
-        for mode_name in panel_config.mode_set
+        for mode_name in mode_names
     }
     aggregate_summary = _classify_batch_summary(
         aggregate_batch_episode_summaries(
@@ -1326,6 +1408,28 @@ def _classify_batch_summary(
     )
 
 
+def _uncertainty_baselines_config_record(
+    config: UncertaintyBaselineConfig,
+) -> dict[str, object]:
+    rolling = config.scenario_rolling_horizon_policy
+    robust = config.robust_policy
+    return {
+        "robust_policy": {
+            "window_length": robust.window_length,
+            "quantile": robust.quantile,
+            "safety_buffer_scale": robust.safety_buffer_scale,
+        },
+        "scenario_rolling_horizon_policy": {
+            "horizon_length": rolling.horizon_length,
+            "scenario_count": rolling.scenario_count,
+            "random_seed": rolling.random_seed,
+            "demand_multipliers": list(rolling.demand_multipliers),
+            "leadtime_multipliers": list(rolling.leadtime_multipliers),
+            "safety_buffer_scales": list(rolling.safety_buffer_scales),
+        },
+    }
+
+
 def _build_artifact_headers(
     *,
     config: RealDemandBacktestConfig,
@@ -1348,6 +1452,9 @@ def _build_artifact_headers(
         "evaluation_horizon_days": config.evaluation_horizon_days,
         "evaluation_start_date": config.evaluation_start_date,
         "mode_set": list(config.mode_set),
+        "uncertainty_baselines": _uncertainty_baselines_config_record(
+            config.uncertainty_baselines
+        ),
         "results_dir": str(config.results_dir),
     }
     config_hash = hash_jsonable(resolved_config)
@@ -1441,6 +1548,9 @@ def _build_panel_artifact_headers(
             str(panel_config.dataset_root) if panel_config.dataset_root is not None else None
         ),
         "mode_set": list(panel_config.mode_set),
+        "uncertainty_baselines": _uncertainty_baselines_config_record(
+            panel_config.uncertainty_baselines
+        ),
         "results_dir": str(panel_config.results_dir),
         "panel_config_hash": panel_config_hash,
         "slice_names": sorted({run.slice_name for run in runs}),

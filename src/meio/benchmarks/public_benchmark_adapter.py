@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from importlib import import_module
 from importlib import invalidate_caches
@@ -23,11 +24,37 @@ from meio.agents.runtime import (
     OrchestrationRuntime,
     RuntimeMode,
 )
+from meio.agents.scenario_planner import (
+    CounterfactualRegretGuardTool,
+    PlannerCandidateScoreRecord,
+    RegimeBeliefTool,
+    RegimeDiagnosisTool,
+    ScenarioCandidateRecord,
+    ScenarioCandidateSet,
+    ScenarioPlannerEvaluationDiagnostics,
+)
 from meio.agents.telemetry import summarize_episode_telemetry
 from meio.benchmarks.replenishmentenv_support import locate_package_root
 from meio.config.loaders import load_agent_config
-from meio.config.schemas import AgentConfig, PublicBenchmarkEvalConfig
-from meio.contracts import MissionSpec, OperationalSubgoal, RegimeLabel, UpdateRequestType
+from meio.config.schemas import (
+    AgentConfig,
+    PublicBenchmarkEvalConfig,
+    RobustPolicyConfig,
+    ScenarioRollingHorizonPolicyConfig,
+)
+from meio.contracts import (
+    AgentSignal,
+    BoundedTool,
+    MissionSpec,
+    OperationalSubgoal,
+    RegimeLabel,
+    ToolClass,
+    ToolInvocation,
+    ToolResult,
+    ToolSpec,
+    ToolStatus,
+    UpdateRequestType,
+)
 from meio.evaluation.aggregate_results import (
     BatchAggregateSummary,
     aggregate_batch_episode_summaries,
@@ -44,11 +71,8 @@ from meio.evaluation.summaries import (
     build_benchmark_run_summary,
     build_episode_summary_record,
 )
-from meio.forecasting.adapters import DeterministicForecastTool
-from meio.leadtime.adapters import DeterministicLeadTimeTool
 from meio.optimization.adapters import TrustedOptimizerAdapter
 from meio.optimization.contracts import OptimizationRequest, OptimizationResult, OptimizationStatus
-from meio.scenarios.adapters import DeterministicScenarioTool
 from meio.scenarios.contracts import (
     ScenarioAdjustmentSummary,
     ScenarioSummary,
@@ -59,6 +83,22 @@ from meio.simulation.state import EpisodeTrace, Observation, PeriodTraceRecord, 
 
 
 VALIDATION_LANE = "public_benchmark"
+PUBLIC_BENCHMARK_SUPPORTED_MODES = (
+    "deterministic_baseline",
+    "robust_policy",
+    "scenario_rolling_horizon_policy",
+    "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
+)
+REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE = (
+    "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"
+)
+REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS = (
+    "regime_diagnosis_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+    "counterfactual_regret_guard_tool",
+)
 _REPLENISHMENTENV_REQUIRED_PATHS: tuple[str, ...] = (
     "env/replenishment_env.py",
     "wrapper/default_wrapper.py",
@@ -346,6 +386,451 @@ class _StepOutcome:
     ending_inventory_total: float
 
 
+@dataclass(frozen=True, slots=True)
+class _PublicCandidateNativeScore:
+    candidate_id: str
+    total_reward: float
+    average_fill_rate: float
+    ending_inventory_mean: float
+    total_order_quantity: float
+    native_objective_score: float | None = None
+    selected: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PublicBenchmarkScenarioCandidateGeneratorTool(BoundedTool):
+    """Generate benchmark-compatible scenario-input candidates."""
+
+    robust_config: RobustPolicyConfig
+    tool_id: str = "scenario_candidate_generator_tool"
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(
+            tool_id=self.tool_id,
+            tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
+            supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
+            description=(
+                "Public-benchmark scenario candidate generator. It produces "
+                "bounded demand, lead-time, and safety-buffer scenario inputs "
+                "for the ReplenishmentEnv native action adapter."
+            ),
+            produces_raw_orders=False,
+        )
+
+    def invoke(self, invocation: ToolInvocation) -> ToolResult:
+        if invocation.observation is None or invocation.evidence is None:
+            raise ValueError("Public benchmark candidate generation requires observation/evidence.")
+        candidate_set = _build_public_scenario_candidate_set(
+            observation=invocation.observation,
+            evidence=invocation.evidence,
+            robust_config=self.robust_config,
+        )
+        return ToolResult(
+            tool_id=invocation.tool_id,
+            tool_class=invocation.tool_class,
+            subgoal=invocation.subgoal,
+            status=ToolStatus.SUCCESS,
+            structured_output={"scenario_candidate_set": candidate_set},
+            confidence=0.91,
+            provenance="public_benchmark_scenario_candidate_generator_tool",
+            next_tool_id="risk_sensitive_scenario_evaluator_tool",
+            next_subgoal=OperationalSubgoal.QUERY_UNCERTAINTY,
+            request_replan=True,
+            emits_raw_orders=False,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PublicBenchmarkRiskSensitiveScenarioEvaluatorTool(BoundedTool):
+    """Score candidates by short ReplenishmentEnv-native counterfactual rollouts."""
+
+    env_provider: object
+    base_stock_multiplier: float
+    demand_scale_epsilon: float
+    rolling_config: ScenarioRollingHorizonPolicyConfig
+    risk_sensitive: bool = True
+    service_target: float = 0.95
+    service_penalty_scale: float = 750.0
+    overreaction_penalty_scale: float = 150.0
+    tool_id: str = "risk_sensitive_scenario_evaluator_tool"
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(
+            tool_id=self.tool_id,
+            tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
+            supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
+            description=(
+                "Public-benchmark native scenario evaluator. It deep-copies "
+                "ReplenishmentEnv and evaluates candidate scenario inputs using "
+                "the benchmark's native reward and service outcomes."
+            ),
+            produces_raw_orders=False,
+        )
+
+    def invoke(self, invocation: ToolInvocation) -> ToolResult:
+        if not callable(self.env_provider):
+            raise ValueError("env_provider must be callable.")
+        candidate_set = _latest_public_candidate_set(invocation)
+        native_scores, evaluation = _evaluate_public_candidate_set(
+            env=self.env_provider(),
+            candidate_set=candidate_set,
+            base_stock_multiplier=self.base_stock_multiplier,
+            demand_scale_epsilon=self.demand_scale_epsilon,
+            rolling_config=self.rolling_config,
+            risk_sensitive=self.risk_sensitive,
+            service_target=self.service_target,
+            service_penalty_scale=self.service_penalty_scale,
+            overreaction_penalty_scale=self.overreaction_penalty_scale,
+        )
+        selected_candidate = _candidate_by_id(
+            candidate_set,
+            evaluation.selected_candidate_id,
+        )
+        scenario_update_result = _scenario_update_from_candidate(
+            selected_candidate,
+            provenance="public_benchmark_risk_sensitive_scenario_evaluator_tool",
+        )
+        return ToolResult(
+            tool_id=invocation.tool_id,
+            tool_class=invocation.tool_class,
+            subgoal=invocation.subgoal,
+            status=(
+                ToolStatus.SUCCESS
+                if scenario_update_result.request_replan
+                else ToolStatus.NO_ACTION
+            ),
+            structured_output={
+                "scenario_update_result": scenario_update_result,
+                "scenario_planner_evaluation": evaluation,
+                "public_native_candidate_scores": native_scores,
+            },
+            confidence=0.93,
+            provenance="public_benchmark_risk_sensitive_scenario_evaluator_tool",
+            next_subgoal=(
+                OperationalSubgoal.REQUEST_REPLAN
+                if scenario_update_result.request_replan
+                else OperationalSubgoal.NO_ACTION
+            ),
+            request_replan=scenario_update_result.request_replan,
+            emits_raw_orders=False,
+        )
+
+
+def _build_public_scenario_candidate_set(
+    *,
+    observation: Observation,
+    evidence: RuntimeEvidence,
+    robust_config: RobustPolicyConfig,
+) -> ScenarioCandidateSet:
+    demand_window = tuple(float(value) for value in observation.demand_evidence.history)
+    leadtime_window = tuple(float(value) for value in observation.leadtime_evidence.history)
+    latest_demand = max(0.0, float(observation.demand_realization[-1]))
+    latest_leadtime = max(1.0, float(observation.leadtime_realization[-1]))
+    demand_baseline = (
+        float(evidence.demand_baseline_value)
+        if evidence.demand_baseline_value is not None
+        else _safe_mean(demand_window, latest_demand)
+    )
+    leadtime_baseline = (
+        float(evidence.leadtime_baseline_value)
+        if evidence.leadtime_baseline_value is not None
+        else _safe_mean(leadtime_window, latest_leadtime)
+    )
+    demand_mean = _safe_mean(demand_window, latest_demand)
+    leadtime_mean = max(1.0, _safe_mean(leadtime_window, latest_leadtime))
+    robust_demand = max(
+        latest_demand,
+        _empirical_quantile(demand_window, robust_config.quantile),
+        demand_mean,
+    )
+    robust_leadtime = max(
+        latest_leadtime,
+        _empirical_quantile(leadtime_window, robust_config.quantile),
+        leadtime_mean,
+        1.0,
+    )
+    shift_demand = max(latest_demand, robust_demand, demand_baseline * 1.10)
+    shift_leadtime = max(latest_leadtime, robust_leadtime, leadtime_baseline)
+    recovery_demand = max(0.0, min(demand_mean, demand_baseline * 1.05))
+    recovery_leadtime = max(1.0, min(leadtime_mean, leadtime_baseline * 1.05))
+    candidates = (
+        ScenarioCandidateRecord(
+            candidate_id="keep_current",
+            provenance="public_benchmark_candidate_generator",
+            demand_outlook=latest_demand,
+            leadtime_outlook=latest_leadtime,
+            safety_buffer_scale=1.0,
+            applied_update_types=(UpdateRequestType.KEEP_CURRENT,),
+            request_replan=False,
+            rationale="Keep benchmark scenario inputs unchanged.",
+        ),
+        ScenarioCandidateRecord(
+            candidate_id="rolling_horizon_incumbent",
+            provenance="public_benchmark_candidate_generator",
+            demand_outlook=max(latest_demand, demand_mean),
+            leadtime_outlook=max(latest_leadtime, leadtime_mean, 1.0),
+            safety_buffer_scale=1.0,
+            applied_update_types=(UpdateRequestType.REWEIGHT_SCENARIOS,),
+            request_replan=True,
+            rationale="Native rolling-horizon incumbent scenario input.",
+        ),
+        ScenarioCandidateRecord(
+            candidate_id="robust_quantile_protection",
+            provenance="public_benchmark_candidate_generator",
+            demand_outlook=robust_demand,
+            leadtime_outlook=robust_leadtime,
+            safety_buffer_scale=robust_config.safety_buffer_scale,
+            applied_update_types=(UpdateRequestType.WIDEN_UNCERTAINTY,),
+            request_replan=True,
+            rationale="Empirical high-quantile uncertainty protection.",
+        ),
+        ScenarioCandidateRecord(
+            candidate_id="original_evidence_path",
+            provenance="public_benchmark_candidate_generator",
+            demand_outlook=max(latest_demand, demand_mean),
+            leadtime_outlook=max(latest_leadtime, leadtime_mean, 1.0),
+            safety_buffer_scale=1.03,
+            applied_update_types=(UpdateRequestType.REWEIGHT_SCENARIOS,),
+            request_replan=True,
+            rationale="Direct evidence path with light public-benchmark buffer.",
+        ),
+        ScenarioCandidateRecord(
+            candidate_id="agentic_sustained_shift_guard",
+            provenance="public_benchmark_candidate_generator",
+            demand_outlook=shift_demand,
+            leadtime_outlook=shift_leadtime,
+            safety_buffer_scale=1.08,
+            applied_update_types=(
+                UpdateRequestType.SWITCH_DEMAND_REGIME,
+                UpdateRequestType.WIDEN_UNCERTAINTY,
+            ),
+            request_replan=True,
+            rationale="Guarded candidate for sustained benchmark demand stress.",
+        ),
+        ScenarioCandidateRecord(
+            candidate_id="agentic_recovery_relaxation",
+            provenance="public_benchmark_candidate_generator",
+            demand_outlook=recovery_demand,
+            leadtime_outlook=recovery_leadtime,
+            safety_buffer_scale=0.98,
+            applied_update_types=(UpdateRequestType.REWEIGHT_SCENARIOS,),
+            request_replan=True,
+            rationale="Relaxed candidate for recovery or false-alarm conditions.",
+        ),
+    )
+    return ScenarioCandidateSet(
+        candidates=candidates,
+        incumbent_candidate_id="rolling_horizon_incumbent",
+        generator_notes=(
+            "candidate_set_shared_by_public_rolling_horizon_and_agentic_ai",
+            "scenario_inputs_only_no_raw_orders",
+        ),
+    )
+
+
+def _latest_public_candidate_set(invocation: ToolInvocation) -> ScenarioCandidateSet:
+    for result in reversed(invocation.prior_results):
+        value = result.structured_output.get("scenario_candidate_set")
+        if isinstance(value, ScenarioCandidateSet):
+            return value
+    raise ValueError("scenario_candidate_set is required before candidate evaluation.")
+
+
+def _candidate_by_id(
+    candidate_set: ScenarioCandidateSet,
+    candidate_id: str,
+) -> ScenarioCandidateRecord:
+    for candidate in candidate_set.candidates:
+        if candidate.candidate_id == candidate_id:
+            return candidate
+    raise ValueError(f"Unknown scenario candidate id: {candidate_id!r}.")
+
+
+def _scenario_update_from_candidate(
+    candidate: ScenarioCandidateRecord,
+    *,
+    provenance: str,
+) -> ScenarioUpdateResult:
+    return ScenarioUpdateResult(
+        scenarios=(
+            ScenarioSummary(
+                scenario_id=candidate.candidate_id,
+                regime_label=RegimeLabel.DEMAND_REGIME_SHIFT
+                if candidate.request_replan
+                else RegimeLabel.NORMAL,
+                weight=1.0,
+                demand_scale=candidate.safety_buffer_scale,
+                leadtime_scale=max(1.0, candidate.leadtime_outlook),
+            ),
+        ),
+        applied_update_types=candidate.applied_update_types,
+        adjustment=ScenarioAdjustmentSummary(
+            demand_outlook=candidate.demand_outlook,
+            leadtime_outlook=candidate.leadtime_outlook,
+            safety_buffer_scale=candidate.safety_buffer_scale,
+        ),
+        request_replan=candidate.request_replan,
+        provenance=provenance,
+    )
+
+
+def _evaluate_public_candidate_set(
+    *,
+    env: object,
+    candidate_set: ScenarioCandidateSet,
+    base_stock_multiplier: float,
+    demand_scale_epsilon: float,
+    rolling_config: ScenarioRollingHorizonPolicyConfig,
+    risk_sensitive: bool,
+    service_target: float = 0.95,
+    service_penalty_scale: float = 750.0,
+    overreaction_penalty_scale: float = 150.0,
+) -> tuple[tuple[dict[str, object], ...], ScenarioPlannerEvaluationDiagnostics]:
+    native_scores = tuple(
+        _evaluate_public_candidate_native(
+            env=env,
+            candidate=candidate,
+            base_stock_multiplier=base_stock_multiplier,
+            demand_scale_epsilon=demand_scale_epsilon,
+            horizon_length=rolling_config.horizon_length,
+        )
+        for candidate in candidate_set.candidates
+    )
+    raw_scores: dict[str, float] = {}
+    service_penalties: dict[str, float] = {}
+    overreaction_penalties: dict[str, float] = {}
+    for candidate, native_score in zip(candidate_set.candidates, native_scores):
+        service_penalty = (
+            max(0.0, service_target - native_score.average_fill_rate)
+            * service_penalty_scale
+            if risk_sensitive
+            else 0.0
+        )
+        overreaction_penalty = (
+            max(0.0, candidate.safety_buffer_scale - 1.05)
+            * overreaction_penalty_scale
+            if risk_sensitive
+            else 0.0
+        )
+        raw_scores[candidate.candidate_id] = (
+            -native_score.total_reward + service_penalty + overreaction_penalty
+        )
+        service_penalties[candidate.candidate_id] = service_penalty
+        overreaction_penalties[candidate.candidate_id] = overreaction_penalty
+    selected_candidate_id = min(raw_scores, key=raw_scores.__getitem__)
+    shift = min(raw_scores.values())
+    candidate_score_records = tuple(
+        PlannerCandidateScoreRecord(
+            candidate_id=candidate.candidate_id,
+            expected_cost=raw_scores[candidate.candidate_id] - shift,
+            demand_outlook=candidate.demand_outlook,
+            leadtime_outlook=candidate.leadtime_outlook,
+            safety_buffer_scale=candidate.safety_buffer_scale,
+            mean_cost=max(0.0, -native_score.total_reward),
+            tail_cost=max(0.0, -native_score.total_reward),
+            service_risk_penalty=service_penalties[candidate.candidate_id],
+            overreaction_penalty=overreaction_penalties[candidate.candidate_id],
+            selected=candidate.candidate_id == selected_candidate_id,
+        )
+        for candidate, native_score in zip(candidate_set.candidates, native_scores)
+    )
+    evaluation = ScenarioPlannerEvaluationDiagnostics(
+        selected_candidate_id=selected_candidate_id,
+        incumbent_candidate_id=candidate_set.incumbent_candidate_id,
+        horizon_length=rolling_config.horizon_length,
+        scenario_count=rolling_config.scenario_count,
+        candidate_count=len(candidate_set.candidates),
+        selected_expected_cost=raw_scores[selected_candidate_id] - shift,
+        incumbent_expected_cost=raw_scores[candidate_set.incumbent_candidate_id] - shift,
+        candidate_scores=candidate_score_records,
+    )
+    native_score_records = tuple(
+        _PublicCandidateNativeScore(
+            candidate_id=score.candidate_id,
+            total_reward=score.total_reward,
+            average_fill_rate=score.average_fill_rate,
+            ending_inventory_mean=score.ending_inventory_mean,
+            total_order_quantity=score.total_order_quantity,
+            native_objective_score=raw_scores[score.candidate_id],
+            selected=score.candidate_id == selected_candidate_id,
+        )
+        for score in native_scores
+    )
+    return native_score_records, evaluation
+
+
+def _evaluate_public_candidate_native(
+    *,
+    env: object,
+    candidate: ScenarioCandidateRecord,
+    base_stock_multiplier: float,
+    demand_scale_epsilon: float,
+    horizon_length: int,
+) -> _PublicCandidateNativeScore:
+    env_copy = deepcopy(env)
+    reward_sum = 0.0
+    fill_rates: list[float] = []
+    ending_inventory: list[float] = []
+    total_order_quantity = 0.0
+    scenario_update_result = _scenario_update_from_candidate(
+        candidate,
+        provenance=f"public_native_candidate_eval:{candidate.candidate_id}",
+    )
+    try:
+        for step_index in range(max(1, horizon_length)):
+            snapshot = _capture_snapshot(env_copy)
+            order_quantities = _solve_skuwise_orders(
+                optimizer=TrustedOptimizerAdapter(),
+                snapshot=snapshot,
+                scenario_update_result=scenario_update_result,
+                base_stock_multiplier=base_stock_multiplier,
+                time_index=step_index,
+            )
+            action_matrix = map_optimizer_orders_to_public_benchmark_actions(
+                replenishment_quantities=order_quantities,
+                demand_mean_by_sku=snapshot.demand_mean_by_sku,
+                action_mode=snapshot.action_mode,
+                demand_scale_epsilon=demand_scale_epsilon,
+            )
+            _next_observation, reward, done_flag, _info = env_copy.step(action_matrix)
+            outcome = _capture_step_outcome(env_copy, reward)
+            reward_sum += outcome.reward_sum
+            if outcome.fill_rate is not None:
+                fill_rates.append(outcome.fill_rate)
+            ending_inventory.append(outcome.ending_inventory_total)
+            total_order_quantity += float(order_quantities.sum())
+            if bool(done_flag):
+                break
+    finally:
+        if hasattr(env_copy, "close"):
+            env_copy.close()
+    return _PublicCandidateNativeScore(
+        candidate_id=candidate.candidate_id,
+        total_reward=reward_sum,
+        average_fill_rate=(
+            float(sum(fill_rates) / len(fill_rates)) if fill_rates else 1.0
+        ),
+        ending_inventory_mean=(
+            float(sum(ending_inventory) / len(ending_inventory))
+            if ending_inventory
+            else 0.0
+        ),
+        total_order_quantity=total_order_quantity,
+    )
+
+
+def _safe_mean(values: tuple[float, ...], default: float) -> float:
+    return float(sum(values) / len(values)) if values else float(default)
+
+
+def _empirical_quantile(values: tuple[float, ...], quantile: float) -> float:
+    if not values:
+        return 0.0
+    return float(np.quantile(np.asarray(values, dtype=np.float32), quantile))
+
+
 def inspect_replenishmentenv_installation(
     *,
     module_name: str = "ReplenishmentEnv",
@@ -588,6 +1073,14 @@ def run_public_benchmark_execution(
     if llm_client_mode_override is not None:
         agent_config = replace(agent_config, llm_client_mode=llm_client_mode_override)
     active_modes = config.mode_set if selected_modes is None else selected_modes
+    unsupported_modes = tuple(
+        mode_name for mode_name in active_modes if mode_name not in PUBLIC_BENCHMARK_SUPPORTED_MODES
+    )
+    if unsupported_modes:
+        raise ValueError(
+            "Public benchmark lane does not support the requested mode(s): "
+            f"{unsupported_modes}."
+        )
     mode_artifacts = tuple(
         _run_public_benchmark_mode(
             module=module,
@@ -618,10 +1111,11 @@ def run_public_benchmark_execution(
             comparability_notes=(
                 "public_benchmark_reward_is_profit_like_not_stockpyl_total_cost",
                 "public_benchmark_fill_rate_is_comparable_as_service_proxy",
+                "scenario_candidates_scored_with_replenishmentenv_native_reward",
                 "multi_store_public_benchmark_mapping_not_attempted_in_this_pass",
             ),
             mapping_assumptions=(
-                "orchestrator_observation_uses_aggregate_per_sku_means",
+                "orchestrator_observation_uses_aggregate_per_sku_state_summary",
                 "trusted_optimizer_executes_one_single_stage_request_per_sku",
                 "optimizer_quantities_are_converted_to_benchmark_actions_by_dividing_by_lookback_demand_mean",
             ),
@@ -631,10 +1125,11 @@ def run_public_benchmark_execution(
         comparability_notes=(
             "public_benchmark_reward_is_profit_like_not_stockpyl_total_cost",
             "public_benchmark_fill_rate_is_comparable_as_service_proxy",
+            "scenario_candidates_scored_with_replenishmentenv_native_reward",
             "multi_store_public_benchmark_mapping_not_attempted_in_this_pass",
         ),
         mapping_assumptions=(
-            "orchestrator_observation_uses_aggregate_per_sku_means",
+            "orchestrator_observation_uses_aggregate_per_sku_state_summary",
             "trusted_optimizer_executes_one_single_stage_request_per_sku",
             "optimizer_quantities_are_converted_to_benchmark_actions_by_dividing_by_lookback_demand_mean",
         ),
@@ -712,11 +1207,16 @@ def _run_public_benchmark_mode(
                 "Only single-store ReplenishmentEnv configs are supported for the "
                 "current thin action-mapping adapter."
             )
-        mission = _build_public_benchmark_mission()
+        mission = _build_public_benchmark_mission(mode_name)
         runtime: OrchestrationRuntime | None = None
         llm_provider: str | None = None
-        if mode_name != "deterministic_baseline":
-            runtime, llm_provider = _build_runtime(agent_config, mode=mode_name)
+        if mode_name != "deterministic_baseline" and not _is_public_policy_mode(mode_name):
+            runtime, llm_provider = _build_runtime(
+                agent_config,
+                mode=mode_name,
+                config=config,
+                env_provider=lambda: env,
+            )
         optimizer = TrustedOptimizerAdapter()
         baseline_policy = DeterministicBaselinePolicy()
         env.reset()
@@ -784,10 +1284,74 @@ def _run_public_benchmark_mode(
                 notes=("public_benchmark", config.environment_config_name),
             )
             response: OrchestrationResponse | None = None
+            policy_diagnostics: dict[str, object] | None = None
             if mode_name == "deterministic_baseline":
                 decision = baseline_policy.decide(system_state, observation, evidence)
                 scenario_update_result = decision.scenario_update_result
                 agent_signal = decision.signal
+            elif mode_name == "robust_policy":
+                candidate_set = _build_public_scenario_candidate_set(
+                    observation=observation,
+                    evidence=evidence,
+                    robust_config=config.uncertainty_baselines.robust_policy,
+                )
+                robust_candidate = _candidate_by_id(
+                    candidate_set,
+                    "robust_quantile_protection",
+                )
+                scenario_update_result = _scenario_update_from_candidate(
+                    robust_candidate,
+                    provenance="public_benchmark_robust_policy",
+                )
+                agent_signal = AgentSignal(
+                    selected_subgoal=OperationalSubgoal.REQUEST_REPLAN,
+                    request_replan=True,
+                    rationale="Public benchmark robust policy selected empirical quantile protection.",
+                )
+                policy_diagnostics = {
+                    "policy_name": "robust_policy",
+                    "selected_candidate_id": robust_candidate.candidate_id,
+                    "native_reward_evaluation": False,
+                }
+            elif mode_name == "scenario_rolling_horizon_policy":
+                candidate_set = _build_public_scenario_candidate_set(
+                    observation=observation,
+                    evidence=evidence,
+                    robust_config=config.uncertainty_baselines.robust_policy,
+                )
+                native_scores, evaluation = _evaluate_public_candidate_set(
+                    env=env,
+                    candidate_set=candidate_set,
+                    base_stock_multiplier=config.base_stock_multiplier,
+                    demand_scale_epsilon=config.demand_scale_epsilon,
+                    rolling_config=config.uncertainty_baselines.scenario_rolling_horizon_policy,
+                    risk_sensitive=False,
+                )
+                selected_candidate = _candidate_by_id(
+                    candidate_set,
+                    evaluation.selected_candidate_id,
+                )
+                scenario_update_result = _scenario_update_from_candidate(
+                    selected_candidate,
+                    provenance="public_benchmark_native_rolling_horizon_policy",
+                )
+                agent_signal = AgentSignal(
+                    selected_subgoal=(
+                        OperationalSubgoal.REQUEST_REPLAN
+                        if scenario_update_result.request_replan
+                        else OperationalSubgoal.NO_ACTION
+                    ),
+                    request_replan=scenario_update_result.request_replan,
+                    no_action=not scenario_update_result.request_replan,
+                    rationale="Public benchmark rolling horizon selected by native reward.",
+                )
+                policy_diagnostics = {
+                    "policy_name": "scenario_rolling_horizon_policy",
+                    "selected_candidate_id": evaluation.selected_candidate_id,
+                    "selected_expected_cost": evaluation.selected_expected_cost,
+                    "incumbent_expected_cost": evaluation.incumbent_expected_cost,
+                    "native_candidate_scores": native_scores,
+                }
             else:
                 request = OrchestrationRequest(
                     mission=mission,
@@ -949,6 +1513,7 @@ def _run_public_benchmark_mode(
                     ),
                     optimizer_output_changed_state=bool(float(order_quantities.sum()) > 0.0),
                     intervention_changed_outcome=False,
+                    policy_diagnostics=policy_diagnostics,
                     validation_lane=VALIDATION_LANE,
                 )
             )
@@ -1236,14 +1801,26 @@ def _expected_step_action_shape(env: object) -> tuple[int, ...]:
     return (warehouse_count, sku_count)
 
 
-def _build_public_benchmark_mission() -> MissionSpec:
+def _is_public_policy_mode(mode: str) -> bool:
+    return mode in {"robust_policy", "scenario_rolling_horizon_policy"}
+
+
+def _tool_ids_for_public_mode(mode: str) -> tuple[str, ...]:
+    if mode == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE:
+        return REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS
+    return ()
+
+
+def _build_public_benchmark_mission(
+    mode: str = REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
+) -> MissionSpec:
     return MissionSpec(
         mission_id="public_benchmark_eval",
         objective=(
             "Inspect bounded benchmark evidence, manage uncertainty conservatively, "
             "and keep replenishment orders inside the trusted optimizer boundary."
         ),
-        admissible_tool_ids=("forecast_tool", "leadtime_tool", "scenario_tool"),
+        admissible_tool_ids=_tool_ids_for_public_mode(mode),
     )
 
 
@@ -1251,17 +1828,28 @@ def _build_runtime(
     agent_config: AgentConfig,
     *,
     mode: str,
+    config: PublicBenchmarkEvalConfig,
+    env_provider: object,
 ) -> tuple[OrchestrationRuntime, str | None]:
     from meio.agents.llm_orchestrator import LLMOrchestrator
 
-    tools = (
-        DeterministicForecastTool(),
-        DeterministicLeadTimeTool(),
-        DeterministicScenarioTool(),
+    regret_guarded_tools = (
+        RegimeDiagnosisTool(),
+        RegimeBeliefTool(),
+        PublicBenchmarkScenarioCandidateGeneratorTool(
+            robust_config=config.uncertainty_baselines.robust_policy,
+        ),
+        PublicBenchmarkRiskSensitiveScenarioEvaluatorTool(
+            env_provider=env_provider,
+            base_stock_multiplier=config.base_stock_multiplier,
+            demand_scale_epsilon=config.demand_scale_epsilon,
+            rolling_config=config.uncertainty_baselines.scenario_rolling_horizon_policy,
+            risk_sensitive=True,
+        ),
+        CounterfactualRegretGuardTool(),
     )
-    if mode == "deterministic_orchestrator":
-        return OrchestrationRuntime(agent_config=agent_config, tools=tools), None
-    if mode == "llm_orchestrator":
+    if mode == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE:
+        tools = regret_guarded_tools
         client_mode = (
             "real" if agent_config.llm_client_mode == "openai" else agent_config.llm_client_mode
         )

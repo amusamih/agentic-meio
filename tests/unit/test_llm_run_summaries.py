@@ -4,6 +4,8 @@ import pytest
 
 from meio.evaluation.llm_run_summaries import ComparisonRunSummary, LLMRunDiagnostics
 
+CURRENT_AGENTIC_MODE = "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"
+
 
 def test_llm_run_diagnostics_constructs_with_valid_counts() -> None:
     diagnostics = LLMRunDiagnostics(
@@ -38,7 +40,7 @@ def test_llm_run_diagnostics_constructs_with_valid_counts() -> None:
 def test_comparison_run_summary_rejects_negative_average() -> None:
     with pytest.raises(ValueError, match="average_tool_call_count"):
         ComparisonRunSummary(
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             run_count=1,
             average_tool_call_count=-1.0,
             average_replan_count=0.0,

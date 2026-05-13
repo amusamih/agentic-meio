@@ -17,9 +17,16 @@ from meio.contracts import BackorderPolicy, BenchmarkFamily, RegimeLabel, ToolCl
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+OFFICIAL_MODES = (
+    "deterministic_baseline",
+    "robust_policy",
+    "scenario_rolling_horizon_policy",
+    "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
+)
 
 
-def test_load_valid_example_configs() -> None:
+def test_load_valid_example_configs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEIO_LLM_ORCHESTRATOR_MODEL", "gpt-4o-mini")
     benchmark_config = load_benchmark_config(REPO_ROOT / "configs/benchmark/serial_3_echelon.toml")
     experiment_config = load_experiment_config(REPO_ROOT / "configs/experiment/first_milestone.toml")
     agent_config = load_agent_config(REPO_ROOT / "configs/agent/base.toml")
@@ -56,7 +63,8 @@ def test_load_stockpyl_serial_experiment_config_reads_rollout_schedule() -> None
     )
 
 
-def test_load_live_llm_configs_reads_real_client_settings() -> None:
+def test_load_live_llm_configs_reads_real_client_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEIO_LLM_ORCHESTRATOR_MODEL", "gpt-5.4-mini")
     experiment_config = load_experiment_config(
         REPO_ROOT / "configs/experiment/stockpyl_serial_live_llm.toml"
     )
@@ -65,7 +73,7 @@ def test_load_live_llm_configs_reads_real_client_settings() -> None:
     assert experiment_config.episode_count == 2
     assert agent_config.llm_provider == "openai"
     assert agent_config.llm_client_mode == "real"
-    assert agent_config.llm_model_name == "gpt-4o-mini"
+    assert agent_config.llm_model_name == "gpt-5.4-mini"
     assert agent_config.llm_temperature == 0.0
     assert agent_config.llm_request_timeout_s == 20.0
     assert agent_config.llm_max_retries == 1
@@ -87,35 +95,12 @@ def test_load_multi_schedule_experiment_config_reads_schedule_and_seed_sets() ->
     assert experiment_config.resolved_schedule_set()[-1].labels[-1] is RegimeLabel.RECOVERY
 
 
-def test_load_tool_ablation_experiment_config_reads_mode_and_ablation_sets() -> None:
-    experiment_config = load_experiment_config(
-        REPO_ROOT / "configs/experiment/stockpyl_serial_tool_ablation.toml"
-    )
-
-    assert experiment_config.mode_set == (
-        "deterministic_baseline",
-        "deterministic_orchestrator",
-        "llm_orchestrator",
-    )
-    assert experiment_config.tool_ablation_variants == (
-        "full",
-        "no_forecast_tool",
-        "no_leadtime_tool",
-        "no_scenario_tool",
-    )
-    assert experiment_config.seed_set == (20260417, 20260418)
-
-
 def test_load_paper_candidate_experiment_config_preserves_full_tool_main_path() -> None:
     experiment_config = load_experiment_config(
         REPO_ROOT / "configs/experiment/stockpyl_serial_paper_candidate.toml"
     )
 
-    assert experiment_config.mode_set == (
-        "deterministic_baseline",
-        "deterministic_orchestrator",
-        "llm_orchestrator",
-    )
+    assert experiment_config.mode_set == OFFICIAL_MODES
     assert experiment_config.tool_ablation_variants == ("full",)
     assert experiment_config.seed_set == (20260417, 20260418)
     assert tuple(schedule.name for schedule in experiment_config.regime_schedules) == (
@@ -132,11 +117,7 @@ def test_load_heldout_experiment_config_preserves_frozen_full_tool_main_path() -
         REPO_ROOT / "configs/experiment/stockpyl_serial_heldout_eval.toml"
     )
 
-    assert experiment_config.mode_set == (
-        "deterministic_baseline",
-        "deterministic_orchestrator",
-        "llm_orchestrator",
-    )
+    assert experiment_config.mode_set == OFFICIAL_MODES
     assert experiment_config.tool_ablation_variants == ("full",)
     assert experiment_config.seed_set == (20260417, 20260418)
     assert tuple(schedule.name for schedule in experiment_config.regime_schedules) == (
@@ -154,11 +135,7 @@ def test_load_frozen_broad_eval_experiment_config_preserves_frozen_full_tool_pat
         REPO_ROOT / "configs/experiment/stockpyl_serial_frozen_broad_eval.toml"
     )
 
-    assert experiment_config.mode_set == (
-        "deterministic_baseline",
-        "deterministic_orchestrator",
-        "llm_orchestrator",
-    )
+    assert experiment_config.mode_set == OFFICIAL_MODES
     assert experiment_config.tool_ablation_variants == ("full",)
     assert experiment_config.seed_set == (20260417, 20260418, 20260419)
     assert tuple(schedule.name for schedule in experiment_config.regime_schedules) == (
@@ -177,6 +154,17 @@ def test_load_frozen_broad_eval_experiment_config_preserves_frozen_full_tool_pat
     assert experiment_config.results_dir == Path("results/stockpyl_serial_frozen_broad_eval")
 
 
+def test_load_realistic_comparison_config_limits_modes_to_paper_comparison() -> None:
+    experiment_config = load_experiment_config(
+        REPO_ROOT / "configs/experiment/stockpyl_serial_realistic_comparison.toml"
+    )
+
+    assert experiment_config.mode_set == OFFICIAL_MODES
+    assert experiment_config.seed_set == (20260417, 20260418, 20260419)
+    assert len(experiment_config.regime_schedules) == 11
+    assert experiment_config.results_dir == Path("results/stockpyl_serial_realistic_comparison")
+
+
 def test_load_public_benchmark_eval_config_reads_replenishmentenv_defaults() -> None:
     config = load_public_benchmark_eval_config(
         REPO_ROOT / "configs/experiment/public_benchmark_eval.toml"
@@ -192,14 +180,24 @@ def test_load_public_benchmark_eval_config_reads_replenishmentenv_defaults() -> 
     assert config.wrapper_names == ("HistoryWrapper",)
     assert config.benchmark_mode == "test"
     assert config.smoke_horizon_steps == 1
-    assert config.mode_set == (
-        "deterministic_baseline",
-        "deterministic_orchestrator",
-        "llm_orchestrator",
-    )
+    assert config.mode_set == OFFICIAL_MODES
     assert config.episode_horizon_steps == 10
     assert config.base_stock_multiplier == 1.0
     assert config.demand_scale_epsilon == 1e-6
+    assert config.uncertainty_baselines.scenario_rolling_horizon_policy.horizon_length == 3
+
+
+def test_load_public_benchmark_realistic_comparison_config_reads_latest_modes() -> None:
+    config = load_public_benchmark_eval_config(
+        REPO_ROOT / "configs/experiment/public_benchmark_realistic_comparison.toml"
+    )
+
+    assert config.experiment_name == "public_benchmark_realistic_comparison"
+    assert config.mode_set == OFFICIAL_MODES
+    assert config.agent_config_path == Path("configs/agent/live_llm.toml")
+    assert config.uncertainty_baselines.robust_policy.window_length == 14
+    assert config.uncertainty_baselines.scenario_rolling_horizon_policy.scenario_count == 8
+    assert config.results_dir == Path("results/public_benchmark_realistic_comparison")
 
 
 def test_load_real_demand_backtest_config_reads_bounded_public_data_settings() -> None:
@@ -212,11 +210,8 @@ def test_load_real_demand_backtest_config_reads_bounded_public_data_settings() -
     assert config.subset_selection == "nearest_benchmark_mean"
     assert config.training_window_days == 180
     assert config.evaluation_horizon_days == 30
-    assert config.mode_set == (
-        "deterministic_baseline",
-        "deterministic_orchestrator",
-        "llm_orchestrator",
-    )
+    assert config.mode_set == OFFICIAL_MODES
+    assert config.uncertainty_baselines.robust_policy.window_length == 14
 
 
 def test_load_real_demand_backtest_panel_config_reads_explicit_slice_panel() -> None:
@@ -225,11 +220,8 @@ def test_load_real_demand_backtest_panel_config_reads_explicit_slice_panel() -> 
     )
 
     assert config.experiment_name == "real_demand_backtest_panel"
-    assert config.mode_set == (
-        "deterministic_baseline",
-        "deterministic_orchestrator",
-        "llm_orchestrator",
-    )
+    assert config.mode_set == OFFICIAL_MODES
+    assert config.uncertainty_baselines.scenario_rolling_horizon_policy.scenario_count == 8
     assert tuple(slice_config.name for slice_config in config.slices) == (
         "store1_low_2018q4",
         "store2_mid_2019q1",
@@ -243,6 +235,18 @@ def test_load_real_demand_backtest_panel_config_reads_explicit_slice_panel() -> 
         "SKU42",
     )
     assert config.slices[1].evaluation_start_date == "2019/2/26"
+
+
+def test_load_real_demand_realistic_comparison_panel_config_reads_latest_modes() -> None:
+    config = load_real_demand_backtest_panel_config(
+        REPO_ROOT / "configs/experiment/real_demand_backtest_panel_realistic_comparison.toml"
+    )
+
+    assert config.experiment_name == "real_demand_backtest_panel_realistic_comparison"
+    assert config.mode_set == OFFICIAL_MODES
+    assert config.agent_config_path == Path("configs/agent/live_llm.toml")
+    assert len(config.slices) == 3
+    assert config.results_dir == Path("results/real_demand_backtest_panel_realistic_comparison")
 
 
 def test_load_benchmark_config_rejects_nonpositive_echelon_count(

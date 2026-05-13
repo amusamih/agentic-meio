@@ -4,7 +4,26 @@ benchmark_config = "configs/benchmark/serial_3_echelon.toml"
 agent_config = "configs/agent/live_llm.toml"
 episode_count = 2
 seed_set = [20260417, 20260418]
+mode_set = [
+    "deterministic_baseline",
+    "robust_policy",
+    "scenario_rolling_horizon_policy",
+    "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
+]
 results_dir = "results/stockpyl_serial_multi_eval"
+
+[uncertainty_baselines.robust_policy]
+window_length = 6
+quantile = 0.80
+safety_buffer_scale = 1.05
+
+[uncertainty_baselines.scenario_rolling_horizon_policy]
+horizon_length = 3
+scenario_count = 8
+random_seed = 20260417
+demand_multipliers = [0.95, 1.0, 1.10, 1.25]
+leadtime_multipliers = [1.0, 1.15]
+safety_buffer_scales = [1.0, 1.05, 1.10]
 
 [[regime_schedules]]
 name = "shift_recovery"

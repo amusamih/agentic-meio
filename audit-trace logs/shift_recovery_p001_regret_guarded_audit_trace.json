@@ -1,0 +1,656 @@
+{
+  "trace_id": "shift_recovery_p001_regret_guarded_v14_gpt54mini",
+  "curation_note": "Curated public audit trace extracted from generated experiment artifacts. Full raw result directories remain local and ignored.",
+  "source_run": {
+    "paper_lane": "controlled_internal_simulation",
+    "validation_lane": "stockpyl_internal",
+    "experiment_id": "stockpyl_serial_realistic_comparison_all",
+    "run_group_id": "stockpyl_serial_realistic_comparison_all_20260513T152713Z",
+    "episode_id": "stockpyl_serial_realistic_comparison_llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator_full_shift_recovery_seed_20260417_run_0",
+    "schedule_name": "shift_recovery",
+    "run_seed": 20260417,
+    "period_index": 1,
+    "source_log_files": [
+      "experiment_metadata.json",
+      "llm_call_traces.jsonl",
+      "step_traces.jsonl",
+      "tool_call_traces.jsonl",
+      "episode_summaries.jsonl"
+    ],
+    "config_hash": "76bceb6b5c9f572bc24f83b218347455a2dbb82de58e7511caca87f2394a884c",
+    "git_commit_sha_at_run_time": "66b25baf628019dfa9ad768c7ecd239b6430eef4"
+  },
+  "system_configuration": {
+    "mode": "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
+    "agentic_layer_scope": "bounded scenario-update selection only",
+    "trusted_action_boundary": "downstream replenishment rule generates replenishment requests",
+    "raw_replenishment_orders_generated_by_agentic_layer": false,
+    "available_tools": [
+      "regime_diagnosis_tool",
+      "regime_belief_tool",
+      "scenario_candidate_generator_tool",
+      "risk_sensitive_scenario_evaluator_tool",
+      "counterfactual_regret_guard_tool"
+    ]
+  },
+  "llm_configuration": {
+    "provider": "openai",
+    "model_name": "gpt-5.4-mini",
+    "prompt_version": "meio.llm_orchestrator.v14",
+    "prompt_hash": "3c731793aa5af94a2b7853bfea23508b6f0a1829b65e919b7369e82590be3de6",
+    "prompt_text_included": false,
+    "raw_output_text_included": false,
+    "hidden_llm_reasoning_included": false
+  },
+  "operating_evidence": {
+    "demand_realization": 14.0,
+    "leadtime_realization": 2.0,
+    "true_regime_label": "demand_regime_shift",
+    "inventory_by_echelon": [
+      10.0,
+      19.812500000000004,
+      24.718750000000007
+    ],
+    "backorders_by_echelon": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "pipeline_by_echelon": [
+      10.187499999999996,
+      15.281249999999993,
+      20.374999999999993
+    ],
+    "demand_ratio_to_baseline": null,
+    "leadtime_ratio_to_baseline": null,
+    "demand_window_used_by_tools": null,
+    "leadtime_window_used_by_tools": null
+  },
+  "orchestration_output": {
+    "selected_subgoal": "query_uncertainty",
+    "candidate_tool_ids": [
+      "regime_diagnosis_tool",
+      "regime_belief_tool",
+      "scenario_candidate_generator_tool",
+      "risk_sensitive_scenario_evaluator_tool",
+      "counterfactual_regret_guard_tool"
+    ],
+    "regime_label": "demand_regime_shift",
+    "confidence": 0.91,
+    "update_request_types": [
+      "switch_demand_regime",
+      "widen_uncertainty"
+    ],
+    "request_replan": true,
+    "rationale": "Observed demand departs materially from baseline and prior demand, while lead time is unchanged and backlog is absent; bounded scenario planning is justified to update demand uncertainty without overreacting."
+  },
+  "tool_call_traces": [
+    {
+      "tool_id": "regime_diagnosis_tool",
+      "success": true,
+      "latency_ms": 0.12019998393952847,
+      "input_summary": {
+        "demand_realization": [
+          14.0
+        ],
+        "leadtime_realization": [
+          2.0
+        ],
+        "inventory": null,
+        "backlog": null,
+        "pipeline": null,
+        "agent_assessment": {
+          "confidence": 0.91,
+          "regime_label": "demand_regime_shift",
+          "request_replan": true
+        }
+      },
+      "output_summary": {
+        "status": "success",
+        "confidence": 0.92,
+        "provenance": "regime_diagnosis_tool",
+        "structured_output": {
+          "regime_diagnosis": {
+            "agent_update_request_types": [
+              "switch_demand_regime",
+              "widen_uncertainty"
+            ],
+            "case_family": "initial_demand_shift",
+            "demand_ratio_to_baseline": 1.4,
+            "demand_window": [
+              10.0,
+              10.0,
+              14.0
+            ],
+            "latest_demand": 14.0,
+            "latest_leadtime": 2.0,
+            "leadtime_ratio_to_baseline": 1.0,
+            "leadtime_window": [
+              2.0,
+              2.0,
+              2.0
+            ],
+            "pipeline_total": 45.843749999999986,
+            "rationale": "Observed demand departs materially from baseline and prior demand, while lead time is unchanged and backlog is absent; bounded scenario planning is justified to update demand uncertainty without overreacting.",
+            "recent_stress_count": 1,
+            "regime_label": "demand_regime_shift",
+            "total_backorder": 0.0
+          }
+        },
+        "request_replan": false,
+        "next_tool_id": "scenario_candidate_generator_tool"
+      },
+      "decision_changed": true,
+      "optimizer_input_changed": false
+    },
+    {
+      "tool_id": "regime_belief_tool",
+      "success": true,
+      "latency_ms": 0.07519987411797047,
+      "input_summary": {
+        "demand_realization": [
+          14.0
+        ],
+        "leadtime_realization": [
+          2.0
+        ],
+        "inventory": null,
+        "backlog": null,
+        "pipeline": null,
+        "agent_assessment": {
+          "confidence": 0.91,
+          "regime_label": "demand_regime_shift",
+          "request_replan": true
+        }
+      },
+      "output_summary": {
+        "status": "success",
+        "confidence": 0.91,
+        "provenance": "regime_belief_tool",
+        "structured_output": {
+          "regime_belief": {
+            "belief_entropy": 1.0764374113253987,
+            "dominant_regime_label": "demand_regime_shift",
+            "entries": [
+              {
+                "demand_multiplier": 1.25,
+                "leadtime_multiplier": 1.0,
+                "probability": 0.62,
+                "rationale": "Demand has moved above baseline.",
+                "regime_label": "demand_regime_shift"
+              },
+              {
+                "demand_multiplier": 0.95,
+                "leadtime_multiplier": 1.0,
+                "probability": 0.13,
+                "rationale": "Preserve false-alarm possibility.",
+                "regime_label": "normal"
+              },
+              {
+                "demand_multiplier": 0.9,
+                "leadtime_multiplier": 1.0,
+                "probability": 0.1,
+                "rationale": "Allow quick mean reversion.",
+                "regime_label": "recovery"
+              },
+              {
+                "demand_multiplier": 1.25,
+                "leadtime_multiplier": 1.15,
+                "probability": 0.15,
+                "rationale": "Demand stress can coincide with lead-time stress.",
+                "regime_label": "joint_disruption"
+              }
+            ],
+            "overreaction_weight": 0.08,
+            "rationale": "Initial shift belief balances response with false-alarm risk.",
+            "service_risk_weight": 0.28,
+            "tail_risk_weight": 0.14
+          }
+        },
+        "request_replan": false,
+        "next_tool_id": "scenario_candidate_generator_tool"
+      },
+      "decision_changed": true,
+      "optimizer_input_changed": false
+    },
+    {
+      "tool_id": "scenario_candidate_generator_tool",
+      "success": true,
+      "latency_ms": 17.978599993512034,
+      "input_summary": {
+        "demand_realization": [
+          14.0
+        ],
+        "leadtime_realization": [
+          2.0
+        ],
+        "inventory": null,
+        "backlog": null,
+        "pipeline": null,
+        "agent_assessment": {
+          "confidence": 0.91,
+          "regime_label": "demand_regime_shift",
+          "request_replan": true
+        }
+      },
+      "output_summary": {
+        "status": "success",
+        "confidence": 0.9,
+        "provenance": "scenario_candidate_generator_tool",
+        "structured_output": {
+          "scenario_candidate_set": {
+            "candidates": [
+              {
+                "applied_update_types": [
+                  "keep_current"
+                ],
+                "candidate_id": "keep_current",
+                "demand_outlook": 14.0,
+                "leadtime_outlook": 2.0,
+                "provenance": "scenario_planner_keep_current",
+                "rationale": "Preserve current observed scenario inputs.",
+                "request_replan": false,
+                "safety_buffer_scale": 1.0
+              },
+              {
+                "applied_update_types": [
+                  "switch_demand_regime",
+                  "widen_uncertainty"
+                ],
+                "candidate_id": "original_evidence_path",
+                "demand_outlook": 17.248000000000005,
+                "leadtime_outlook": 2.0,
+                "provenance": "deterministic_scenario_smoke_adapter",
+                "rationale": "Original forecast-leadtime-scenario path candidate generated for initial_demand_shift.",
+                "request_replan": true,
+                "safety_buffer_scale": 1.2127500000000002
+              },
+              {
+                "applied_update_types": [
+                  "reweight_scenarios"
+                ],
+                "candidate_id": "rolling_horizon_incumbent",
+                "demand_outlook": 10.766666666666667,
+                "leadtime_outlook": 2.0,
+                "provenance": "scenario_rolling_horizon_policy",
+                "rationale": "Fixed-grid scenario rolling horizon incumbent.",
+                "request_replan": true,
+                "safety_buffer_scale": 1.1
+              },
+              {
+                "applied_update_types": [
+                  "widen_uncertainty"
+                ],
+                "candidate_id": "robust_quantile_protection",
+                "demand_outlook": 14.0,
+                "leadtime_outlook": 2.0,
+                "provenance": "robust_uncertainty_protected_policy",
+                "rationale": "Empirical high-quantile robust protection candidate.",
+                "request_replan": true,
+                "safety_buffer_scale": 1.05
+              },
+              {
+                "applied_update_types": [
+                  "reweight_scenarios"
+                ],
+                "candidate_id": "agentic_fast_demand_reweight",
+                "demand_outlook": 15.120000000000001,
+                "leadtime_outlook": 2.0,
+                "provenance": "scenario_candidate_generator_tool",
+                "rationale": "Fast demand reweighting without excessive buffer widening.",
+                "request_replan": true,
+                "safety_buffer_scale": 1.02
+              },
+              {
+                "applied_update_types": [
+                  "switch_demand_regime"
+                ],
+                "candidate_id": "agentic_sustained_shift_guard",
+                "demand_outlook": 16.099999999999998,
+                "leadtime_outlook": 2.0,
+                "provenance": "scenario_candidate_generator_tool",
+                "rationale": "Sustained-shift candidate emphasizes demand level over safety inflation.",
+                "request_replan": true,
+                "safety_buffer_scale": 1.0
+              }
+            ],
+            "generator_notes": [
+              "rolling_horizon_incumbent_included",
+              "case_family:initial_demand_shift",
+              "agentic_candidates_are_regime_conditioned_bounded_scenario_inputs"
+            ],
+            "incumbent_candidate_id": "rolling_horizon_incumbent"
+          }
+        },
+        "request_replan": false,
+        "next_tool_id": "scenario_evaluator_tool"
+      },
+      "decision_changed": true,
+      "optimizer_input_changed": false
+    },
+    {
+      "tool_id": "risk_sensitive_scenario_evaluator_tool",
+      "success": true,
+      "latency_ms": 4.5507000759243965,
+      "input_summary": {
+        "demand_realization": [
+          14.0
+        ],
+        "leadtime_realization": [
+          2.0
+        ],
+        "inventory": null,
+        "backlog": null,
+        "pipeline": null,
+        "agent_assessment": {
+          "confidence": 0.91,
+          "regime_label": "demand_regime_shift",
+          "request_replan": true
+        }
+      },
+      "output_summary": {
+        "status": "success",
+        "confidence": 0.93,
+        "provenance": "risk_sensitive_scenario_evaluator_tool",
+        "structured_output": {
+          "scenario_planner_evaluation": {
+            "candidate_count": 6,
+            "candidate_scores": [
+              {
+                "candidate_id": "keep_current",
+                "demand_outlook": 14.0,
+                "expected_cost": 1055.40676203125,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 458.95109375000004,
+                "overreaction_penalty": 0.0,
+                "safety_buffer_scale": 1.0,
+                "selected": false,
+                "service_risk_penalty": 19.130355781250003,
+                "tail_cost": 516.609375
+              },
+              {
+                "candidate_id": "original_evidence_path",
+                "demand_outlook": 17.248000000000005,
+                "expected_cost": 648.8219829124447,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 538.5046415000002,
+                "overreaction_penalty": 0.1230479286946563,
+                "safety_buffer_scale": 1.2127500000000002,
+                "selected": false,
+                "service_risk_penalty": 23.906981603750012,
+                "tail_cost": 598.1939420000002
+              },
+              {
+                "candidate_id": "rolling_horizon_incumbent",
+                "demand_outlook": 10.766666666666667,
+                "expected_cost": 2359.529535225694,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 455.4675729166667,
+                "overreaction_penalty": 0.0,
+                "safety_buffer_scale": 1.1,
+                "selected": false,
+                "service_risk_penalty": 18.829405364583337,
+                "tail_cost": 512.2960416666667
+              },
+              {
+                "candidate_id": "robust_quantile_protection",
+                "demand_outlook": 14.0,
+                "expected_cost": 1041.83952203125,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 460.08859375000003,
+                "overreaction_penalty": 0.0012600000000000022,
+                "safety_buffer_scale": 1.05,
+                "selected": false,
+                "service_risk_penalty": 19.228355781250006,
+                "tail_cost": 518.009375
+              },
+              {
+                "candidate_id": "agentic_fast_demand_reweight",
+                "demand_outlook": 15.120000000000001,
+                "expected_cost": 781.5254824139898,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 462.5281875,
+                "overreaction_penalty": 0.005202570240000013,
+                "safety_buffer_scale": 1.02,
+                "selected": false,
+                "service_risk_penalty": 19.418090343750006,
+                "tail_cost": 521.4143
+              },
+              {
+                "candidate_id": "agentic_sustained_shift_guard",
+                "demand_outlook": 16.099999999999998,
+                "expected_cost": 639.0810160937502,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 467.164375,
+                "overreaction_penalty": 0.011339999999999986,
+                "safety_buffer_scale": 1.0,
+                "selected": true,
+                "service_risk_penalty": 19.738251093750005,
+                "tail_cost": 526.9075
+              }
+            ],
+            "horizon_length": 3,
+            "incumbent_candidate_id": "rolling_horizon_incumbent",
+            "incumbent_expected_cost": 2359.529535225694,
+            "scenario_count": 8,
+            "selected_candidate_id": "agentic_sustained_shift_guard",
+            "selected_expected_cost": 639.0810160937502
+          },
+          "scenario_update_result": {
+            "adjustment": {
+              "demand_outlook": 16.099999999999998,
+              "leadtime_outlook": 2.0,
+              "safety_buffer_scale": 1.0
+            },
+            "applied_update_types": [
+              "switch_demand_regime"
+            ],
+            "provenance": "scenario_planner_selected:agentic_sustained_shift_guard",
+            "request_replan": true,
+            "scenarios": [
+              {
+                "demand_scale": 1.0,
+                "leadtime_scale": 1.0,
+                "regime_label": "demand_regime_shift",
+                "scenario_id": "scenario_planner_agentic_sustained_shift_guard",
+                "weight": 1.0
+              }
+            ]
+          }
+        },
+        "request_replan": true,
+        "next_tool_id": null
+      },
+      "decision_changed": true,
+      "optimizer_input_changed": true
+    },
+    {
+      "tool_id": "counterfactual_regret_guard_tool",
+      "success": true,
+      "latency_ms": 0.04950002767145634,
+      "input_summary": {
+        "demand_realization": [
+          14.0
+        ],
+        "leadtime_realization": [
+          2.0
+        ],
+        "inventory": null,
+        "backlog": null,
+        "pipeline": null,
+        "agent_assessment": {
+          "confidence": 0.91,
+          "regime_label": "demand_regime_shift",
+          "request_replan": true
+        }
+      },
+      "output_summary": {
+        "status": "success",
+        "confidence": 0.91,
+        "provenance": "counterfactual_regret_guard_tool",
+        "structured_output": {
+          "counterfactual_regret_guard": {
+            "final_selected_candidate_id": "agentic_sustained_shift_guard",
+            "guard_changed_selection": false,
+            "guard_reason": "risk_sensitive_selection_retained",
+            "initial_selected_candidate_id": "agentic_sustained_shift_guard"
+          },
+          "scenario_planner_evaluation": {
+            "candidate_count": 6,
+            "candidate_scores": [
+              {
+                "candidate_id": "keep_current",
+                "demand_outlook": 14.0,
+                "expected_cost": 1055.40676203125,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 458.95109375000004,
+                "overreaction_penalty": 0.0,
+                "safety_buffer_scale": 1.0,
+                "selected": false,
+                "service_risk_penalty": 19.130355781250003,
+                "tail_cost": 516.609375
+              },
+              {
+                "candidate_id": "original_evidence_path",
+                "demand_outlook": 17.248000000000005,
+                "expected_cost": 648.8219829124447,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 538.5046415000002,
+                "overreaction_penalty": 0.1230479286946563,
+                "safety_buffer_scale": 1.2127500000000002,
+                "selected": false,
+                "service_risk_penalty": 23.906981603750012,
+                "tail_cost": 598.1939420000002
+              },
+              {
+                "candidate_id": "rolling_horizon_incumbent",
+                "demand_outlook": 10.766666666666667,
+                "expected_cost": 2359.529535225694,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 455.4675729166667,
+                "overreaction_penalty": 0.0,
+                "safety_buffer_scale": 1.1,
+                "selected": false,
+                "service_risk_penalty": 18.829405364583337,
+                "tail_cost": 512.2960416666667
+              },
+              {
+                "candidate_id": "robust_quantile_protection",
+                "demand_outlook": 14.0,
+                "expected_cost": 1041.83952203125,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 460.08859375000003,
+                "overreaction_penalty": 0.0012600000000000022,
+                "safety_buffer_scale": 1.05,
+                "selected": false,
+                "service_risk_penalty": 19.228355781250006,
+                "tail_cost": 518.009375
+              },
+              {
+                "candidate_id": "agentic_fast_demand_reweight",
+                "demand_outlook": 15.120000000000001,
+                "expected_cost": 781.5254824139898,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 462.5281875,
+                "overreaction_penalty": 0.005202570240000013,
+                "safety_buffer_scale": 1.02,
+                "selected": false,
+                "service_risk_penalty": 19.418090343750006,
+                "tail_cost": 521.4143
+              },
+              {
+                "candidate_id": "agentic_sustained_shift_guard",
+                "demand_outlook": 16.099999999999998,
+                "expected_cost": 639.0810160937502,
+                "leadtime_outlook": 2.0,
+                "mean_cost": 467.164375,
+                "overreaction_penalty": 0.011339999999999986,
+                "safety_buffer_scale": 1.0,
+                "selected": true,
+                "service_risk_penalty": 19.738251093750005,
+                "tail_cost": 526.9075
+              }
+            ],
+            "horizon_length": 3,
+            "incumbent_candidate_id": "rolling_horizon_incumbent",
+            "incumbent_expected_cost": 2359.529535225694,
+            "scenario_count": 8,
+            "selected_candidate_id": "agentic_sustained_shift_guard",
+            "selected_expected_cost": 639.0810160937502
+          },
+          "scenario_update_result": {
+            "adjustment": {
+              "demand_outlook": 16.099999999999998,
+              "leadtime_outlook": 2.0,
+              "safety_buffer_scale": 1.0
+            },
+            "applied_update_types": [
+              "switch_demand_regime"
+            ],
+            "provenance": "scenario_planner_selected:agentic_sustained_shift_guard",
+            "request_replan": true,
+            "scenarios": [
+              {
+                "demand_scale": 1.0,
+                "leadtime_scale": 1.0,
+                "regime_label": "demand_regime_shift",
+                "scenario_id": "scenario_planner_agentic_sustained_shift_guard",
+                "weight": 1.0
+              }
+            ]
+          }
+        },
+        "request_replan": true,
+        "next_tool_id": null
+      },
+      "decision_changed": false,
+      "optimizer_input_changed": false
+    }
+  ],
+  "validation_and_calibration": {
+    "invalid_output": false,
+    "validation_success": true,
+    "fallback_used": false,
+    "retry_count": 0,
+    "calibration_applied": false,
+    "hysteresis_applied": false,
+    "repeated_stress_moderation_applied": false,
+    "relapse_moderation_applied": false,
+    "unresolved_stress_moderation_applied": false,
+    "moderation_reason": null
+  },
+  "protected_handoff": {
+    "proposed_update_strength": "switch_demand_regime_plus_widen_uncertainty",
+    "final_update_strength": "switch_demand_regime_plus_widen_uncertainty",
+    "final_update_request_types": [
+      "switch_demand_regime"
+    ],
+    "downstream_scenario_input_changed": true,
+    "scenario_adjustment_summary": {
+      "demand_outlook": 16.099999999999998,
+      "leadtime_outlook": 2.0,
+      "safety_buffer_scale": 1.0
+    }
+  },
+  "trusted_decision_output": {
+    "downstream_replenishment_requests": [
+      12.0125,
+      13.206249999999997,
+      19.30624999999999
+    ],
+    "optimizer_output_changed_state": true,
+    "per_period_cost": 61.57500000000001,
+    "per_period_fill_rate": 0.7142857142857143
+  },
+  "runtime_telemetry": {
+    "prompt_tokens": 1758,
+    "completion_tokens": 132,
+    "total_tokens": 1890,
+    "llm_latency_ms": 4519.5449001621455,
+    "tool_call_count_in_period": 5,
+    "episode_total_tokens": 5584,
+    "episode_total_retry_count": 0,
+    "episode_invalid_output_count": 0,
+    "episode_fallback_count": 0
+  }
+}

@@ -123,7 +123,7 @@ def test_index_result_runs_reads_saved_mode_level_governance() -> None:
             {
                 "mode_summaries": [
                     {
-                        "mode": "deterministic_orchestrator",
+                        "mode": "robust_policy",
                         "artifact_use_class": "internal_only",
                         "validity_gate_passed": True,
                         "eligibility_notes": [
@@ -142,7 +142,7 @@ def test_index_result_runs_reads_saved_mode_level_governance() -> None:
         records = index_result_runs(scratch_dir / "results")
 
         assert len(records) == 1
-        assert records[0].mode == "deterministic_orchestrator"
+        assert records[0].mode == "robust_policy"
         assert records[0].artifact_use_class is ArtifactUseClass.INTERNAL_ONLY
         assert records[0].validity_gate_passed is True
         assert records[0].average_total_cost == 320.0
@@ -167,7 +167,7 @@ def test_list_paper_eligible_runs_filters_indexed_output(
                 benchmark_id="serial_3_echelon",
                 benchmark_source="stockpyl_serial",
                 validation_lane="stockpyl_internal",
-                mode="llm_orchestrator",
+                mode="llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
                 provider="fake_llm_client",
                 model_name="gpt-4o-mini",
                 artifact_use_class=ArtifactUseClass.INTERNAL_ONLY,

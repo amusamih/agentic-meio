@@ -16,7 +16,21 @@ evaluation_horizon_days = 30
 roll_forward_stride_days = 1
 mode_set = [
   "deterministic_baseline",
-  "deterministic_orchestrator",
-  "llm_orchestrator",
+  "robust_policy",
+  "scenario_rolling_horizon_policy",
+  "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
 ]
 results_dir = "results/real_demand_backtest"
+
+[uncertainty_baselines.robust_policy]
+window_length = 14
+quantile = 0.80
+safety_buffer_scale = 1.05
+
+[uncertainty_baselines.scenario_rolling_horizon_policy]
+horizon_length = 3
+scenario_count = 8
+random_seed = 20260417
+demand_multipliers = [0.95, 1.0, 1.10, 1.25]
+leadtime_multipliers = [1.0, 1.15]
+safety_buffer_scales = [1.0, 1.05, 1.10]

@@ -217,6 +217,7 @@ def _build_experiment_metadata(
         "episode_horizon_steps": config.episode_horizon_steps,
         "base_stock_multiplier": config.base_stock_multiplier,
         "demand_scale_epsilon": config.demand_scale_epsilon,
+        "uncertainty_baselines": _uncertainty_baselines_config_record(config),
         "results_dir": str(config.results_dir),
         "benchmark_config_path": str(config_path),
     }
@@ -265,6 +266,26 @@ def _build_experiment_metadata(
         operational_metrics_gate_passed=operational_metrics_gate_passed,
         eligibility_notes=eligibility_notes,
     )
+
+
+def _uncertainty_baselines_config_record(config) -> dict[str, object]:
+    robust = config.uncertainty_baselines.robust_policy
+    rolling = config.uncertainty_baselines.scenario_rolling_horizon_policy
+    return {
+        "robust_policy": {
+            "window_length": robust.window_length,
+            "quantile": robust.quantile,
+            "safety_buffer_scale": robust.safety_buffer_scale,
+        },
+        "scenario_rolling_horizon_policy": {
+            "horizon_length": rolling.horizon_length,
+            "scenario_count": rolling.scenario_count,
+            "random_seed": rolling.random_seed,
+            "demand_multipliers": list(rolling.demand_multipliers),
+            "leadtime_multipliers": list(rolling.leadtime_multipliers),
+            "safety_buffer_scales": list(rolling.safety_buffer_scales),
+        },
+    }
 
 
 def _build_run_manifest(

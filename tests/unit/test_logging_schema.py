@@ -27,7 +27,7 @@ def test_experiment_metadata_construction_accepts_typed_resolved_config() -> Non
         mode="all",
         provider="mixed",
         model_name="mixed",
-        tool_ablation_variants=("full", "no_forecast_tool"),
+        tool_ablation_variants=("full",),
         artifact_use_class=ArtifactUseClass.INTERNAL_ONLY,
         validity_gate_passed=False,
         eligibility_notes=("provisional_stockpyl_rollout",),
@@ -38,7 +38,7 @@ def test_experiment_metadata_construction_accepts_typed_resolved_config() -> Non
     assert metadata.schema_version == SCHEMA_VERSION
     assert metadata.provider == "mixed"
     assert metadata.model_name == "mixed"
-    assert metadata.tool_ablation_variants == ("full", "no_forecast_tool")
+    assert metadata.tool_ablation_variants == ("full",)
     assert metadata.artifact_use_class is ArtifactUseClass.INTERNAL_ONLY
     assert metadata.validity_gate_passed is False
 
@@ -56,10 +56,10 @@ def test_run_manifest_record_construction_captures_written_artifacts() -> None:
         seed_values=(20260417, 20260418),
         mode_names=(
             "deterministic_baseline",
-            "deterministic_orchestrator",
-            "llm_orchestrator",
+            "robust_policy",
+            "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
         ),
-        tool_ablation_variants=("full", "no_scenario_tool"),
+        tool_ablation_variants=("full",),
         provider="mixed",
         model_name="mixed",
         artifact_use_class=ArtifactUseClass.INTERNAL_ONLY,
@@ -67,7 +67,7 @@ def test_run_manifest_record_construction_captures_written_artifacts() -> None:
         eligibility_notes=("provisional_operational_metrics",),
         mode_artifact_use_classes=(
             ("deterministic_baseline", "internal_only"),
-            ("deterministic_orchestrator", "internal_only"),
+            ("robust_policy", "internal_only"),
         ),
         prompt_version=PROMPT_VERSION,
         prompt_hash="prompt_hash",
@@ -80,7 +80,7 @@ def test_run_manifest_record_construction_captures_written_artifacts() -> None:
 
     assert manifest.schema_version == SCHEMA_VERSION
     assert manifest.seed_values == (20260417, 20260418)
-    assert manifest.tool_ablation_variants == ("full", "no_scenario_tool")
+    assert manifest.tool_ablation_variants == ("full",)
     assert manifest.artifact_filenames[-1] == ("run_manifest", "run_manifest.json")
     assert manifest.mode_artifact_use_classes[0] == (
         "deterministic_baseline",
@@ -91,7 +91,7 @@ def test_run_manifest_record_construction_captures_written_artifacts() -> None:
 def test_step_trace_record_construction_preserves_typed_period_fields() -> None:
     record = StepTraceRecord(
         episode_id="episode_1",
-        mode="llm_orchestrator",
+        mode="llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
         tool_ablation_variant="full",
         schedule_name="shift_recovery",
         run_seed=20260417,
@@ -100,7 +100,13 @@ def test_step_trace_record_construction_preserves_typed_period_fields() -> None:
         predicted_regime_label="demand_regime_shift",
         confidence=0.84,
         selected_subgoal="query_uncertainty",
-        selected_tools=("forecast_tool", "leadtime_tool", "scenario_tool"),
+        selected_tools=(
+            "regime_diagnosis_tool",
+            "regime_belief_tool",
+            "scenario_candidate_generator_tool",
+            "risk_sensitive_scenario_evaluator_tool",
+            "counterfactual_regret_guard_tool",
+        ),
         proposed_update_requests=("switch_demand_regime", "widen_uncertainty"),
         proposed_update_strength="switch_demand_regime_plus_widen_uncertainty",
         final_update_strength="reweight_scenarios",
@@ -128,7 +134,7 @@ def test_step_trace_record_construction_preserves_typed_period_fields() -> None:
         calibration_reason="repeated_stress_not_materially_worsening",
     )
 
-    assert record.selected_tools[-1] == "scenario_tool"
+    assert record.selected_tools[-1] == "counterfactual_regret_guard_tool"
     assert record.scenario_adjustment_summary is not None
     assert record.scenario_adjustment_summary["safety_buffer_scale"] == 1.1
     assert record.proposed_update_strength == "switch_demand_regime_plus_widen_uncertainty"
@@ -143,7 +149,7 @@ def test_step_trace_record_construction_preserves_typed_period_fields() -> None:
 def test_episode_summary_and_trace_records_capture_logging_fields() -> None:
     episode = EpisodeSummaryRecord(
         episode_id="episode_1",
-        mode="deterministic_orchestrator",
+        mode="robust_policy",
         benchmark_id="serial_3_echelon",
         topology="serial",
         echelon_count=3,
@@ -197,7 +203,7 @@ def test_episode_summary_and_trace_records_capture_logging_fields() -> None:
     )
     llm_trace = LLMCallTraceRecord(
         episode_id="episode_1",
-        mode="llm_orchestrator",
+        mode="llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
         tool_ablation_variant="full",
         schedule_name="shift_recovery",
         run_seed=20260417,
@@ -214,8 +220,8 @@ def test_episode_summary_and_trace_records_capture_logging_fields() -> None:
         invalid_output=False,
         fallback_used=False,
         fallback_reason=None,
-        requested_tool_ids=("forecast_tool", "scenario_tool"),
-        unavailable_tool_ids=("forecast_tool",),
+        requested_tool_ids=("regime_diagnosis_tool", "counterfactual_regret_guard_tool"),
+        unavailable_tool_ids=("regime_diagnosis_tool",),
         violated_available_tool_set=True,
         proposed_update_strength="switch_demand_regime_plus_widen_uncertainty",
         final_update_strength="reweight_scenarios",
@@ -237,14 +243,14 @@ def test_episode_summary_and_trace_records_capture_logging_fields() -> None:
     )
     tool_trace = ToolCallTraceRecord(
         episode_id="episode_1",
-        mode="deterministic_orchestrator",
+        mode="llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
         tool_ablation_variant="full",
         schedule_name="shift_recovery",
         run_seed=20260417,
         period_index=0,
         call_index=0,
-        tool_id="forecast_tool",
-        tool_input={"tool_id": "forecast_tool"},
+        tool_id="regime_diagnosis_tool",
+        tool_input={"tool_id": "regime_diagnosis_tool"},
         tool_output={"status": "success"},
         success=True,
         error_type=None,

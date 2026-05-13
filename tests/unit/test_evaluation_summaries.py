@@ -141,7 +141,7 @@ def test_build_episode_summary_record_scales_episode_telemetry_totals() -> None:
 
     record = build_episode_summary_record(
         summary,
-        mode="llm_orchestrator",
+        mode="llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
         tool_ablation_variant="full",
         schedule_name="shift_recovery",
         run_seed=20260417,

@@ -431,6 +431,7 @@ class StepTraceRecord:
     unresolved_stress_moderation_applied: bool = False
     calibration_reason: str | None = None
     moderation_reason: str | None = None
+    policy_diagnostics: dict[str, object] | None = None
     validation_lane: str | None = None
 
     def __post_init__(self) -> None:
@@ -474,6 +475,11 @@ class StepTraceRecord:
             _validate_non_empty_text(self.moderation_reason, "moderation_reason")
         if self.calibration_reason is not None:
             _validate_non_empty_text(self.calibration_reason, "calibration_reason")
+        if self.policy_diagnostics is not None and not isinstance(
+            self.policy_diagnostics,
+            dict,
+        ):
+            raise TypeError("policy_diagnostics must be a dictionary when provided.")
         if self.proposed_update_strength is not None:
             _validate_non_empty_text(
                 self.proposed_update_strength,

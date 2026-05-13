@@ -216,7 +216,7 @@ _FAKE_RESPONSES = {
     },
     RegimeLabel.DEMAND_REGIME_SHIFT: {
         "selected_subgoal": "query_uncertainty",
-        "candidate_tool_ids": ["forecast_tool", "leadtime_tool", "scenario_tool"],
+        "candidate_tool_ids": [],
         "regime_label": "demand_regime_shift",
         "confidence": 0.86,
         "update_request_types": ["switch_demand_regime", "widen_uncertainty"],
@@ -225,7 +225,7 @@ _FAKE_RESPONSES = {
     },
     RegimeLabel.SUPPLY_DISRUPTION: {
         "selected_subgoal": "query_uncertainty",
-        "candidate_tool_ids": ["forecast_tool", "leadtime_tool", "scenario_tool"],
+        "candidate_tool_ids": [],
         "regime_label": "supply_disruption",
         "confidence": 0.84,
         "update_request_types": ["switch_leadtime_regime", "widen_uncertainty"],
@@ -234,7 +234,7 @@ _FAKE_RESPONSES = {
     },
     RegimeLabel.JOINT_DISRUPTION: {
         "selected_subgoal": "query_uncertainty",
-        "candidate_tool_ids": ["forecast_tool", "leadtime_tool", "scenario_tool"],
+        "candidate_tool_ids": [],
         "regime_label": "joint_disruption",
         "confidence": 0.83,
         "update_request_types": ["switch_demand_regime", "switch_leadtime_regime", "widen_uncertainty"],
@@ -250,14 +250,6 @@ _FAKE_RESPONSES = {
         "request_replan": False,
         "rationale": "Recovery evidence does not justify another intervention right now.",
     },
-}
-
-_PREFERRED_TOOL_IDS_BY_REGIME = {
-    RegimeLabel.NORMAL: (),
-    RegimeLabel.DEMAND_REGIME_SHIFT: ("forecast_tool", "leadtime_tool", "scenario_tool"),
-    RegimeLabel.SUPPLY_DISRUPTION: ("forecast_tool", "leadtime_tool", "scenario_tool"),
-    RegimeLabel.JOINT_DISRUPTION: ("forecast_tool", "leadtime_tool", "scenario_tool"),
-    RegimeLabel.RECOVERY: (),
 }
 
 
@@ -286,31 +278,29 @@ class FakeLLMClient:
 
 def _fake_payload_for_context(context: LLMClientContext) -> dict[str, object]:
     payload = dict(_FAKE_RESPONSES[context.regime_label])
-    preferred_tool_ids = _PREFERRED_TOOL_IDS_BY_REGIME[context.regime_label]
-    selected_tool_ids = tuple(
-        tool_id
-        for tool_id in preferred_tool_ids
-        if tool_id in context.available_tool_ids
+    regret_guarded_sequence = (
+        "regime_diagnosis_tool",
+        "regime_belief_tool",
+        "scenario_candidate_generator_tool",
+        "risk_sensitive_scenario_evaluator_tool",
+        "counterfactual_regret_guard_tool",
     )
-    deduped_tool_ids: list[str] = []
-    for tool_id in selected_tool_ids:
-        if tool_id not in deduped_tool_ids:
-            deduped_tool_ids.append(tool_id)
-    if deduped_tool_ids:
-        payload["candidate_tool_ids"] = deduped_tool_ids
+    if all(tool_id in context.available_tool_ids for tool_id in regret_guarded_sequence):
+        payload["candidate_tool_ids"] = [
+            *regret_guarded_sequence,
+        ]
         payload["selected_subgoal"] = "query_uncertainty"
+        payload["request_replan"] = context.regime_label is not RegimeLabel.NORMAL
         if context.regime_label is RegimeLabel.NORMAL:
-            payload["request_replan"] = False
             payload["update_request_types"] = ["keep_current"]
-            payload["rationale"] = (
-                "Signals remain close to baseline after bounded inspection, so no planning "
-                "change is justified."
-            )
-        else:
-            payload["request_replan"] = True
-            payload["rationale"] = (
-                "The available bounded tools should be used before guarded replanning."
-            )
+        if context.regime_label is RegimeLabel.RECOVERY:
+            payload["update_request_types"] = ["reweight_scenarios"]
+        payload["rationale"] = (
+            "Regret-guarded risk-sensitive fake response asks for explicit "
+            "regime diagnosis, bounded regime-belief formation, candidate "
+            "generation, risk-sensitive evaluation, and a final counterfactual "
+            "regret guard before protected downstream handoff."
+        )
         return payload
     payload["candidate_tool_ids"] = []
     if context.regime_label in {

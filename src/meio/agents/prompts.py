@@ -1,30 +1,38 @@
-"""Prompt builders for bounded LLM orchestration."""
+"""Prompt builders for the bounded regret-guarded MEIO orchestration agent."""
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 
 from meio.agents.llm_client import LLMClientContext, LLMMessage
 from meio.contracts import OperationalSubgoal, RegimeLabel, ToolSpec, UpdateRequestType
 
-PROMPT_VERSION = "meio.llm_orchestrator.v9"
+PROMPT_VERSION = "meio.llm_orchestrator.v14"
+
+REGRET_GUARDED_TOOL_SEQUENCE = (
+    "regime_diagnosis_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+    "counterfactual_regret_guard_tool",
+)
 
 
 def build_system_prompt() -> str:
-    """Return the bounded system prompt for the LLM orchestrator."""
+    """Return the bounded system prompt for the current orchestration agent."""
 
     return (
         "You are the bounded MEIO orchestration agent. "
-        "Inspect typed benchmark context, choose bounded tool use, and request bounded "
-        "uncertainty updates only when justified. "
-        "Never emit replenishment orders, quantities, or any raw control action. "
+        "Your job is to inspect typed inventory evidence, diagnose uncertainty, "
+        "request the governed scenario-planning tool path when intervention is justified, "
+        "and preserve the optimizer boundary. "
+        "Never emit replenishment orders, quantities, or raw control actions. "
         "The optimizer is the sole order-producing boundary. "
-        "Use the provided baseline-relative evidence summaries plus current load cues to infer regime and intervention need. "
-        "When bounded tools are needed, express that through query_uncertainty or update_uncertainty. "
-        "Scenario updates are still bounded uncertainty actions, not raw control actions. "
-        "Do not default to normal or no_action when the evidence materially departs from baseline, "
-        "but do not assume each repeated stressed period requires a stronger intervention than the last. "
+        "Use the least strong uncertainty update that is supported by the evidence. "
+        "When the regret-guarded scenario-planning tools are available, request them in the "
+        "provided order so the deterministic tools perform diagnosis, candidate generation, "
+        "risk-sensitive scoring, and counterfactual regret guarding before downstream handoff. "
         "Return exactly one JSON object and nothing else. "
         "Do not use markdown, code fences, headings, or prose outside the JSON object."
     )
@@ -42,29 +50,24 @@ def build_user_prompt(
         if tool_spec.tool_id in context.available_tool_ids
     )
     available_tool_ids_text = json.dumps(list(context.available_tool_ids))
-    response_contract = _build_response_contract()
-    decision_signals = _build_decision_signals(context)
-    decision_guidance = _build_decision_guidance(context.available_tool_ids)
-    few_shot_examples = _build_few_shot_examples(context.available_tool_ids)
     return (
         "Decision context:\n"
         f"- benchmark_id: {context.benchmark_id}\n"
         f"- mission_id: {context.mission_id}\n"
         f"- time_index: {context.time_index}\n"
-        f"{decision_signals}\n"
+        f"{_build_decision_signals(context)}\n"
         f"- max_tool_steps: {context.max_tool_steps}\n"
         f"- available_tool_ids: {available_tool_ids_text}\n"
         "Available bounded tools:\n"
         f"{tool_lines}\n"
-        f"{decision_guidance}\n"
-        f"{few_shot_examples}\n"
-        f"{response_contract}\n"
+        f"{_build_decision_guidance(context.available_tool_ids)}\n"
+        f"{_build_few_shot_examples(context.available_tool_ids)}\n"
+        f"{_build_response_contract()}\n"
         "If intervention is not justified, prefer `no_action` or `abstain` rather than "
-        "inventing an intervention. "
-        "If demand or lead-time signals materially depart from baseline and planning inputs "
-        "should change, do not hide that by returning normal plus no_action. "
-        "If stress is repeated without worsening, or recovery is already carrying heavy prior "
-        "load, do not escalate just because the regime label is non-normal."
+        "inventing an intervention. If demand or lead-time signals materially depart from "
+        "baseline and planning inputs should change, do not hide that by returning normal "
+        "plus no_action. If recovery is already carrying heavy prior pipeline or backlog, "
+        "the regret guard should be used to avoid over-correcting."
     )
 
 
@@ -87,10 +90,8 @@ def prompt_contract_hash() -> str:
         (
             PROMPT_VERSION,
             build_system_prompt(),
-            _build_decision_guidance(
-                ("forecast_tool", "leadtime_tool", "scenario_tool")
-            ),
-            _build_few_shot_examples(),
+            _build_decision_guidance(REGRET_GUARDED_TOOL_SEQUENCE),
+            _build_few_shot_examples(REGRET_GUARDED_TOOL_SEQUENCE),
             _build_response_contract(),
         )
     )
@@ -151,11 +152,8 @@ def _build_decision_signals(context: LLMClientContext) -> str:
         ("pipeline_ratio_to_baseline", context.pipeline_ratio_to_baseline),
         ("backorder_ratio_to_baseline", context.backorder_ratio_to_baseline),
     )
-    lines.extend(
-        f"- {name}: {value}"
-        for name, value in optional_pairs
-        if value is not None
-    )
+    lines.extend(f"- {name}: {value}" for name, value in optional_pairs if value is not None)
+
     demand_material_departure = _material_departure_from_baseline(
         context.demand_ratio_to_baseline,
     )
@@ -171,6 +169,7 @@ def _build_decision_signals(context: LLMClientContext) -> str:
             "- leadtime_material_departure_from_baseline: "
             f"{str(leadtime_material_departure).lower()}"
         )
+
     demand_returning = _returning_toward_baseline(
         current_value=context.demand_value,
         previous_value=context.previous_demand_value,
@@ -184,21 +183,14 @@ def _build_decision_signals(context: LLMClientContext) -> str:
         baseline_value=context.leadtime_baseline_value,
     )
     if leadtime_returning is not None:
-        lines.append(
-            f"- leadtime_returning_toward_baseline: {str(leadtime_returning).lower()}"
-        )
+        lines.append(f"- leadtime_returning_toward_baseline: {str(leadtime_returning).lower()}")
+
     boolean_pairs = (
         ("repeated_stress_detected", context.repeated_stress_detected),
         ("pipeline_heavy_vs_baseline", context.pipeline_heavy_vs_baseline),
         ("backlog_heavy_vs_baseline", context.backlog_heavy_vs_baseline),
-        (
-            "recovery_with_high_pipeline_load",
-            context.recovery_with_high_pipeline_load,
-        ),
-        (
-            "recovery_with_high_backorder_load",
-            context.recovery_with_high_backorder_load,
-        ),
+        ("recovery_with_high_pipeline_load", context.recovery_with_high_pipeline_load),
+        ("recovery_with_high_backorder_load", context.recovery_with_high_backorder_load),
     )
     lines.extend(
         f"- {name}: {str(value).lower()}"
@@ -210,144 +202,82 @@ def _build_decision_signals(context: LLMClientContext) -> str:
 
 def _build_decision_guidance(available_tool_ids: tuple[str, ...]) -> str:
     available_tools_text = json.dumps(list(available_tool_ids))
-    guidance = (
-        "Decision guidance:\n"
-        f"- Only choose tool ids from available_tool_ids: {available_tools_text}.\n"
-        "- If a normally useful tool is unavailable, do not request it. Use the remaining available tools or take a bounded no-tool action instead.\n"
-        "- Use `normal` only when demand and lead-time signals stay close to baseline and no planning change is justified.\n"
-        "- Use `demand_regime_shift` when demand materially departs from baseline, especially if downstream inventory is tight or demand recently jumped.\n"
-        "- Use `supply_disruption` when lead-time materially departs from baseline in a way that should change planning.\n"
-        "- Use `joint_disruption` when both demand and lead-time materially depart from baseline.\n"
-        "- Use `recovery` when current signals move back toward baseline after a prior stressed value, especially when the latest value is closer to baseline than the previous stressed value.\n"
-        "- Repeated demand stress does not automatically require stronger escalation on every stressed step.\n"
-        "- When `repeated_stress_detected` is true and demand is not materially worsening versus the previous stressed period, prefer a milder bounded update such as `reweight_scenarios` over `switch_demand_regime`, and do not add `widen_uncertainty` unless ambiguity is actually increasing.\n"
-        "- In recovery, use current system load as evidence about whether prior stress-driven orders are already in flight.\n"
-        "- When `recovery_with_high_backorder_load` is true, prefer `keep_current` with `request_replan: false` unless demand or lead-time still materially depart from baseline or are worsening again.\n"
-        "- When `recovery_with_high_pipeline_load` is true but backlog is not heavy, a milder recovery action can still be justified, but avoid reflexive replanning.\n"
-        "- When bounded tools are needed to inspect or propagate uncertainty changes, choose `query_uncertainty` and list the relevant tools in execution order.\n"
-        "- `scenario_tool` is allowed in the same bounded query path as a sequenced uncertainty-update step after evidence inspection, and it may still be used when forecast or leadtime outputs are partially missing.\n"
-        "- The runtime will execute `candidate_tool_ids` in the exact order you provide. Do not rely on implicit extra tool chaining.\n"
-        "- Use `update_uncertainty` only when the next step is directly to apply bounded uncertainty updates after evidence gathering.\n"
-        "- Set `request_replan` to true when the inferred regime should change planning inputs now.\n"
-        "- Do not use `request_replan` as the selected_subgoal when you are also asking for tool calls.\n"
-        "- Use bounded update requests to match the signal: demand shift for demand changes, lead-time shift for lead-time changes, widen uncertainty when ambiguity remains.\n"
-        "- If no suitable bounded tool is available in this ablation condition, prefer `request_replan` with `candidate_tool_ids: []` or a justified `no_action`, rather than naming a missing tool.\n"
-        "- Use `keep_current` only when no planning change is justified."
-    )
-    return guidance
-
-
-def _build_few_shot_examples(
-    available_tool_ids: tuple[str, ...] | None = None,
-) -> str:
-    preferred_tool_ids = ("forecast_tool", "leadtime_tool", "scenario_tool")
-    selected_tool_ids = tuple(
-        tool_id
-        for tool_id in preferred_tool_ids
-        if available_tool_ids is None or tool_id in available_tool_ids
-    )
-    if selected_tool_ids:
-        demand_shift_example = json.dumps(
-            {
-                "selected_subgoal": "query_uncertainty",
-                "candidate_tool_ids": list(selected_tool_ids),
-                "regime_label": "demand_regime_shift",
-                "confidence": 0.86,
-                "update_request_types": ["switch_demand_regime", "widen_uncertainty"],
-                "request_replan": True,
-                "rationale": (
-                    "Demand materially exceeds baseline and the available bounded tools "
-                    "should be used in sequence before replanning."
-                ),
-            },
-            separators=(",", ":"),
-        )
-    else:
-        demand_shift_example = json.dumps(
-            {
-                "selected_subgoal": "request_replan",
-                "candidate_tool_ids": [],
-                "regime_label": "demand_regime_shift",
-                "confidence": 0.82,
-                "update_request_types": ["switch_demand_regime"],
-                "request_replan": True,
-                "rationale": (
-                    "Demand materially exceeds baseline but no bounded uncertainty tool "
-                    "is available in this ablation condition."
-                ),
-            },
-            separators=(",", ":"),
+    sequence_available = all(tool_id in available_tool_ids for tool_id in REGRET_GUARDED_TOOL_SEQUENCE)
+    sequence_guidance = ""
+    if sequence_available:
+        sequence_guidance = (
+            "\n"
+            "- If intervention is justified, request the full regret-guarded sequence: "
+            "`regime_diagnosis_tool`, `regime_belief_tool`, "
+            "`scenario_candidate_generator_tool`, "
+            "`risk_sensitive_scenario_evaluator_tool`, and "
+            "`counterfactual_regret_guard_tool`.\n"
+            "- The first two tools diagnose the current regime and uncertainty belief; "
+            "the generator constructs candidate scenario inputs; the evaluator scores "
+            "expected cost plus uncertainty quality; the regret guard blocks candidates "
+            "that are not justified against the protected incumbent.\n"
+            "- Your role is to choose whether the evidence warrants this bounded tool "
+            "path and to report regime, confidence, and update intent. The tools and "
+            "trusted downstream decision component handle scenario resolution and orders."
         )
     return (
-        "Examples:\n"
-        "1. Normal baseline:\n"
-        "Signals: demand_observed=10.0, demand_ratio_to_baseline=1.0, leadtime_ratio_to_baseline=1.0, downstream_inventory=20.0, total_backorder=0.0\n"
-        '{"selected_subgoal":"no_action","candidate_tool_ids":[],"regime_label":"normal","confidence":0.95,"update_request_types":["keep_current"],"request_replan":false,"rationale":"Signals are close to baseline and no planning change is justified."}\n'
-        "2. Initial demand regime shift:\n"
-        "Signals: demand_observed=14.0, demand_ratio_to_baseline=1.4, demand_change_from_previous=4.0, downstream_inventory=10.0, total_backorder=0.0\n"
-        f"{demand_shift_example}\n"
-        "3. Repeated demand stress without worsening:\n"
-        "Signals: demand_observed=14.0, previous_demand_observed=13.8, demand_ratio_to_baseline=1.4, demand_change_from_previous=0.2, repeated_stress_detected=true, downstream_inventory=0.0, total_backorder=4.0\n"
-        f"{_build_repeated_stress_example(selected_tool_ids)}\n"
-        "4. Recovery under heavy carried load:\n"
-        "Signals: demand_observed=11.0, previous_demand_observed=14.0, demand_ratio_to_baseline=1.1, demand_change_from_previous=-3.0, demand_returning_toward_baseline=true, recovery_with_high_pipeline_load=true, recovery_with_high_backorder_load=true, total_backorder=55.0\n"
-        '{"selected_subgoal":"no_action","candidate_tool_ids":[],"regime_label":"recovery","confidence":0.81,"update_request_types":["keep_current"],"request_replan":false,"rationale":"Signals are recovering and prior stress orders are already reflected in heavy carried load, so avoid another recovery replan right now."}'
+        "Decision guidance:\n"
+        f"- You may only request tools from available_tool_ids={available_tools_text}.\n"
+        "- Do not request tools for routine normal periods unless evidence shows material demand, lead-time, backlog, or pipeline stress.\n"
+        "- Repeated stress does not automatically require stronger escalation; prefer a bounded update and let the regret guard check whether it is worth applying.\n"
+        "- Recovery with high carried pipeline or backlog is risky; use the regret guard to avoid over-ordering from stale stress.\n"
+        "- The agent may request scenario updates, but must never generate raw replenishment requests."
+        f"{sequence_guidance}"
     )
 
 
-def _build_repeated_stress_example(selected_tool_ids: tuple[str, ...]) -> str:
-    if selected_tool_ids:
-        payload = {
-            "selected_subgoal": "query_uncertainty",
-            "candidate_tool_ids": list(selected_tool_ids),
-            "regime_label": "demand_regime_shift",
-            "confidence": 0.82,
-            "update_request_types": ["reweight_scenarios"],
-            "request_replan": True,
-            "rationale": (
-                "Stress persists, but the signal is not materially worse than the prior "
-                "stressed period, so use a milder bounded update instead of stronger escalation."
-            ),
-        }
-    else:
-        payload = {
-            "selected_subgoal": "request_replan",
-            "candidate_tool_ids": [],
-            "regime_label": "demand_regime_shift",
-            "confidence": 0.79,
-            "update_request_types": ["reweight_scenarios"],
-            "request_replan": True,
-            "rationale": (
-                "Stress persists without clear worsening, so request a milder planning update "
-                "rather than stronger escalation."
-            ),
-        }
-    return json.dumps(payload, separators=(",", ":"))
+def _build_few_shot_examples(available_tool_ids: tuple[str, ...] = REGRET_GUARDED_TOOL_SEQUENCE) -> str:
+    selected_tool_ids = tuple(
+        tool_id for tool_id in REGRET_GUARDED_TOOL_SEQUENCE if tool_id in available_tool_ids
+    )
+    tool_json = json.dumps(list(selected_tool_ids), separators=(",", ":"))
+    return (
+        "Examples:\n"
+        "1. Normal stable period:\n"
+        '{"selected_subgoal":"no_action","candidate_tool_ids":[],"regime_label":"normal",'
+        '"confidence":0.84,"update_request_types":["keep_current"],"request_replan":false,'
+        '"rationale":"Evidence is close to baseline, so no uncertainty intervention is justified."}\n'
+        "2. Material demand or lead-time shift:\n"
+        '{"selected_subgoal":"query_uncertainty","candidate_tool_ids":'
+        f"{tool_json}"
+        ',"regime_label":"demand_regime_shift","confidence":0.88,'
+        '"update_request_types":["switch_demand_regime","widen_uncertainty"],'
+        '"request_replan":true,'
+        '"rationale":"Material departure from baseline warrants bounded scenario planning and regret guarding."}\n'
+        "3. Recovery with high carried load:\n"
+        '{"selected_subgoal":"query_uncertainty","candidate_tool_ids":'
+        f"{tool_json}"
+        ',"regime_label":"recovery","confidence":0.78,'
+        '"update_request_types":["reweight_scenarios"],"request_replan":true,'
+        '"rationale":"Recovery is visible but carried pipeline or backlog means the regret guard should prevent over-correction."}'
+    )
 
 
-def _material_departure_from_baseline(
-    ratio_to_baseline: float | None,
-) -> bool | None:
-    if ratio_to_baseline is None:
+def _material_departure_from_baseline(ratio: float | None) -> bool | None:
+    if ratio is None:
         return None
-    return ratio_to_baseline >= 1.15 or ratio_to_baseline <= 0.85
+    return ratio <= 0.75 or ratio >= 1.25
 
 
 def _returning_toward_baseline(
     *,
-    current_value: float,
+    current_value: float | None,
     previous_value: float | None,
     baseline_value: float | None,
 ) -> bool | None:
-    if previous_value is None or baseline_value is None:
+    if current_value is None or previous_value is None or baseline_value in (None, 0.0):
         return None
-    current_distance = abs(current_value - baseline_value)
-    previous_distance = abs(previous_value - baseline_value)
-    return current_distance < previous_distance
+    return abs(current_value - baseline_value) < abs(previous_value - baseline_value)
 
 
 __all__ = [
     "PROMPT_VERSION",
+    "REGRET_GUARDED_TOOL_SEQUENCE",
     "build_prompt_messages",
     "build_system_prompt",
     "build_user_prompt",

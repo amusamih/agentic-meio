@@ -11,12 +11,7 @@ from meio.evaluation.logging_schema import (
     ToolCallTraceRecord,
 )
 
-REMOVED_TOOL_BY_ABLATION = {
-    "full": None,
-    "no_forecast_tool": "forecast_tool",
-    "no_leadtime_tool": "leadtime_tool",
-    "no_scenario_tool": "scenario_tool",
-}
+REMOVED_TOOL_BY_ABLATION = {"full": None}
 
 
 def _mean_or_none(values: tuple[float | None, ...]) -> float | None:
@@ -154,7 +149,7 @@ def summarize_tool_ablation(
 ) -> ToolAblationSummary:
     """Compare one tool-ablation variant against the full tool set."""
 
-    removed_tool_id = REMOVED_TOOL_BY_ABLATION[tool_ablation_variant]
+    removed_tool_id = REMOVED_TOOL_BY_ABLATION.get(tool_ablation_variant)
     if tool_ablation_variant == "full":
         return ToolAblationSummary(
             mode=mode,

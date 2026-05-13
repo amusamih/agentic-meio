@@ -1,4 +1,4 @@
-"""Bounded orchestration runtime skeleton for the first MEIO milestone."""
+"""Bounded orchestration runtime for MEIO uncertainty-management experiments."""
 
 from __future__ import annotations
 
@@ -43,6 +43,35 @@ if TYPE_CHECKING:
         LLMOrchestrationDecision,
         LLMOrchestrator,
     )
+
+
+REQUIRED_SINGLE_TOOL_HANDOFF_IDS = frozenset()
+
+REQUIRED_TOOL_SEQUENCE_HANDOFFS = frozenset(
+    {
+        (
+            "regime_diagnosis_tool",
+            "regime_belief_tool",
+            "scenario_candidate_generator_tool",
+            "risk_sensitive_scenario_evaluator_tool",
+            "counterfactual_regret_guard_tool",
+        ),
+    }
+)
+
+TERMINAL_SCENARIO_INPUT_TOOL_IDS = frozenset(
+    {
+        "counterfactual_regret_guard_tool",
+    }
+)
+
+REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_SEQUENCE = (
+    "regime_diagnosis_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+    "counterfactual_regret_guard_tool",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,9 +372,18 @@ class OrchestrationRuntime:
                     response,
                     orchestration_latency_ms=(perf_counter() - orchestration_start) * 1000.0,
                 )
+            selected_tool_ids = self._effective_llm_tool_ids(
+                request=request,
+                selected_tool_ids=llm_decision.selected_tool_ids,
+            )
+            selected_subgoal = self._effective_llm_subgoal(
+                request=request,
+                selected_subgoal=llm_decision.selected_subgoal,
+                selected_tool_ids=selected_tool_ids,
+            )
             subgoal = self._normalize_llm_subgoal(
-                llm_decision.selected_subgoal,
-                llm_decision.selected_tool_ids,
+                selected_subgoal,
+                selected_tool_ids,
             )
             if subgoal in {OperationalSubgoal.NO_ACTION, OperationalSubgoal.ABSTAIN}:
                 response = self._build_terminal_response(
@@ -362,7 +400,7 @@ class OrchestrationRuntime:
                     response,
                     orchestration_latency_ms=(perf_counter() - orchestration_start) * 1000.0,
                 )
-            if subgoal is OperationalSubgoal.REQUEST_REPLAN and not llm_decision.selected_tool_ids:
+            if subgoal is OperationalSubgoal.REQUEST_REPLAN and not selected_tool_ids:
                 response = self._build_terminal_response(
                     subgoal=OperationalSubgoal.REQUEST_REPLAN,
                     rationale=agent_assessment.rationale,
@@ -378,13 +416,15 @@ class OrchestrationRuntime:
                     response,
                     orchestration_latency_ms=(perf_counter() - orchestration_start) * 1000.0,
                 )
-            queue = self._seed_tool_queue(subgoal, llm_decision.selected_tool_ids)
-            allow_implicit_follow_on = not bool(llm_decision.selected_tool_ids)
+            queue = self._seed_tool_queue(subgoal, selected_tool_ids)
+            allow_implicit_follow_on = not bool(selected_tool_ids)
         else:
             subgoal = request.requested_subgoal or OperationalSubgoal.INSPECT_EVIDENCE
             queue = self._seed_tool_queue(subgoal, request.candidate_tool_ids)
             allow_implicit_follow_on = not bool(request.candidate_tool_ids)
         max_steps = min(self._agent_config.max_tool_steps, request.mission.max_tool_steps)
+        if tuple(queue) == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_SEQUENCE:
+            max_steps = max(max_steps, len(tuple(queue)))
         admissibility_checks: list[AdmissibilityCheck] = []
         tool_call_traces: list[ToolCallTrace] = []
         tool_results: list[ToolResult] = []
@@ -463,6 +503,8 @@ class OrchestrationRuntime:
 
             if result.status in {ToolStatus.ABSTAIN, ToolStatus.NO_ACTION}:
                 break
+            if result.tool_id in TERMINAL_SCENARIO_INPUT_TOOL_IDS:
+                break
 
             if result.next_subgoal is not None:
                 subgoal = result.next_subgoal
@@ -496,10 +538,7 @@ class OrchestrationRuntime:
             tool_sequence=tuple(result.tool_id for result in tool_results),
             abstained=final_result.status is ToolStatus.ABSTAIN,
             no_action=final_result.status is ToolStatus.NO_ACTION,
-            request_replan=(
-                any(result.request_replan for result in tool_results)
-                or (agent_assessment.request_replan if agent_assessment is not None else False)
-            ),
+            request_replan=final_result.request_replan,
             rationale=self._build_rationale(tool_results, agent_assessment),
         )
         response = OrchestrationResponse(
@@ -537,6 +576,56 @@ class OrchestrationRuntime:
         if (
             selected_subgoal is OperationalSubgoal.REQUEST_REPLAN
             and selected_tool_ids
+        ):
+            return OperationalSubgoal.QUERY_UNCERTAINTY
+        return selected_subgoal
+
+    def _effective_llm_tool_ids(
+        self,
+        *,
+        request: OrchestrationRequest,
+        selected_tool_ids: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        if request.candidate_tool_ids in REQUIRED_TOOL_SEQUENCE_HANDOFFS:
+            return request.candidate_tool_ids
+        if (
+            len(request.candidate_tool_ids) == 1
+            and request.candidate_tool_ids[0] in REQUIRED_SINGLE_TOOL_HANDOFF_IDS
+        ):
+            return request.candidate_tool_ids
+        if (
+            request.candidate_tool_ids
+            == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_SEQUENCE
+            and any(
+                tool_id in REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_SEQUENCE
+                for tool_id in selected_tool_ids
+            )
+        ):
+            return REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_SEQUENCE
+        return selected_tool_ids
+
+    def _effective_llm_subgoal(
+        self,
+        *,
+        request: OrchestrationRequest,
+        selected_subgoal: OperationalSubgoal,
+        selected_tool_ids: tuple[str, ...],
+    ) -> OperationalSubgoal:
+        if request.candidate_tool_ids in REQUIRED_TOOL_SEQUENCE_HANDOFFS:
+            return OperationalSubgoal.QUERY_UNCERTAINTY
+        if (
+            len(request.candidate_tool_ids) == 1
+            and request.candidate_tool_ids[0] in REQUIRED_SINGLE_TOOL_HANDOFF_IDS
+            and selected_tool_ids
+        ):
+            return OperationalSubgoal.QUERY_UNCERTAINTY
+        if (
+            request.candidate_tool_ids
+            == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_SEQUENCE
+            and any(
+                tool_id in REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_SEQUENCE
+                for tool_id in selected_tool_ids
+            )
         ):
             return OperationalSubgoal.QUERY_UNCERTAINTY
         return selected_subgoal
@@ -730,13 +819,13 @@ class OrchestrationRuntime:
             update_request_types = tuple(
                 update_type.value for update_type in scenario_result.applied_update_types
             )
-        request_replan = False
-        if agent_assessment is not None:
-            request_replan = agent_assessment.request_replan
+        request_replan = (
+            agent_assessment.request_replan if agent_assessment is not None else False
+        )
         if scenario_result is not None:
-            request_replan = request_replan or scenario_result.request_replan
+            request_replan = scenario_result.request_replan
         if current_result is not None:
-            request_replan = request_replan or current_result.request_replan
+            request_replan = current_result.request_replan
         return {
             "selected_subgoal": subgoal.value,
             "regime_label": (

@@ -120,7 +120,7 @@ def test_logging_io_writes_json_and_jsonl_artifacts() -> None:
         )
         llm_call = LLMCallTraceRecord(
             episode_id="episode_2",
-            mode="llm_orchestrator",
+            mode="llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
             tool_ablation_variant="full",
             schedule_name="shift_recovery",
             run_seed=20260417,
@@ -137,7 +137,13 @@ def test_logging_io_writes_json_and_jsonl_artifacts() -> None:
             invalid_output=False,
             fallback_used=False,
             fallback_reason=None,
-            requested_tool_ids=("leadtime_tool", "scenario_tool"),
+            requested_tool_ids=(
+                "regime_diagnosis_tool",
+                "regime_belief_tool",
+                "scenario_candidate_generator_tool",
+                "risk_sensitive_scenario_evaluator_tool",
+                "counterfactual_regret_guard_tool",
+            ),
             unavailable_tool_ids=(),
             violated_available_tool_set=False,
             prompt_tokens=96,
@@ -150,14 +156,14 @@ def test_logging_io_writes_json_and_jsonl_artifacts() -> None:
         )
         tool_call = ToolCallTraceRecord(
             episode_id="episode_1",
-            mode="deterministic_orchestrator",
+            mode="llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
             tool_ablation_variant="full",
             schedule_name="shift_recovery",
             run_seed=20260417,
             period_index=0,
             call_index=0,
-            tool_id="forecast_tool",
-            tool_input={"tool_id": "forecast_tool"},
+            tool_id="regime_diagnosis_tool",
+            tool_input={"tool_id": "regime_diagnosis_tool"},
             tool_output={"status": "success"},
             success=True,
             error_type=None,

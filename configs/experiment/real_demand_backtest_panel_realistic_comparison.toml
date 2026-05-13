@@ -1,7 +1,7 @@
 [experiment]
-name = "real_demand_backtest_panel"
+name = "real_demand_backtest_panel_realistic_comparison"
 benchmark_config = "configs/benchmark/serial_3_echelon.toml"
-agent_config = "configs/agent/base.toml"
+agent_config = "configs/agent/live_llm.toml"
 discovery_module = "ReplenishmentEnv"
 mode_set = [
   "deterministic_baseline",
@@ -9,7 +9,7 @@ mode_set = [
   "scenario_rolling_horizon_policy",
   "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
 ]
-results_dir = "results/real_demand_backtest"
+results_dir = "results/real_demand_backtest_panel_realistic_comparison"
 
 [uncertainty_baselines.robust_policy]
 window_length = 14

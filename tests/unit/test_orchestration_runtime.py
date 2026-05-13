@@ -31,6 +31,14 @@ from meio.simulation.serial_benchmark import (
 )
 from meio.simulation.state import Observation, SimulationState
 
+CURRENT_TOOL_IDS = (
+    "regime_diagnosis_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+    "counterfactual_regret_guard_tool",
+)
+
 
 class FakeTool(BoundedTool):
     def __init__(self, spec: ToolSpec, result_factory):
@@ -153,6 +161,64 @@ def test_runtime_invokes_admissible_tool_and_returns_structured_output() -> None
     assert response.tool_call_traces[0].tool_id == "evidence_tool"
     assert response.step_telemetry is not None
     assert response.step_telemetry.tool_call_count == 1
+
+
+def test_runtime_treats_regret_guard_tool_as_terminal() -> None:
+    system_state, observation, evidence = build_runtime_context()
+    regret_guard_tool = FakeTool(
+        spec=ToolSpec(
+            tool_id="counterfactual_regret_guard_tool",
+            tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
+            supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
+        ),
+        result_factory=lambda invocation: ToolResult(
+            tool_id=invocation.tool_id,
+            tool_class=invocation.tool_class,
+            subgoal=invocation.subgoal,
+            status=ToolStatus.SUCCESS,
+            structured_output={"summary": "guarded_update_selected"},
+            next_tool_id="scenario_tool",
+            next_subgoal=OperationalSubgoal.REQUEST_REPLAN,
+            request_replan=True,
+        ),
+    )
+    scenario_tool = FakeTool(
+        spec=ToolSpec(
+            tool_id="scenario_tool",
+            tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
+            supported_subgoals=(OperationalSubgoal.REQUEST_REPLAN,),
+        ),
+        result_factory=lambda invocation: ToolResult(
+            tool_id=invocation.tool_id,
+            tool_class=invocation.tool_class,
+            subgoal=invocation.subgoal,
+            status=ToolStatus.SUCCESS,
+            structured_output={"summary": "should_not_run"},
+            request_replan=True,
+        ),
+    )
+    runtime = OrchestrationRuntime(
+        agent_config=build_agent_config(),
+        tools=[regret_guard_tool, scenario_tool],
+    )
+    request = OrchestrationRequest(
+        mission=MissionSpec(
+            mission_id="serial_mission",
+            objective="Keep the current regret-guarded terminal tool terminal.",
+            admissible_tool_ids=("counterfactual_regret_guard_tool", "scenario_tool"),
+        ),
+        system_state=system_state,
+        observation=observation,
+        evidence=evidence,
+        requested_subgoal=OperationalSubgoal.QUERY_UNCERTAINTY,
+        candidate_tool_ids=("counterfactual_regret_guard_tool", "scenario_tool"),
+    )
+
+    response = runtime.run(request)
+
+    assert response.signal.tool_sequence == ("counterfactual_regret_guard_tool",)
+    assert len(response.tool_results) == 1
+    assert response.tool_results[0].structured_output["summary"] == "guarded_update_selected"
 
 
 def test_runtime_sequences_multiple_tools_within_step_limit() -> None:
@@ -527,53 +593,27 @@ def test_runtime_rejects_nested_mapping_output_payloads() -> None:
 
 def test_runtime_supports_llm_orchestration_with_fake_client() -> None:
     system_state, observation, evidence = build_runtime_context()
-    forecast_tool = FakeTool(
-        spec=ToolSpec(
-            tool_id="forecast_tool",
-            tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-            supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
-        ),
-        result_factory=lambda invocation: ToolResult(
-            tool_id=invocation.tool_id,
-            tool_class=invocation.tool_class,
-            subgoal=invocation.subgoal,
-            status=ToolStatus.SUCCESS,
-            structured_output={"summary": "forecast_checked"},
-            next_tool_id="leadtime_tool",
-            next_subgoal=OperationalSubgoal.QUERY_UNCERTAINTY,
-        ),
-    )
-    leadtime_tool = FakeTool(
-        spec=ToolSpec(
-            tool_id="leadtime_tool",
-            tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-            supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
-        ),
-        result_factory=lambda invocation: ToolResult(
-            tool_id=invocation.tool_id,
-            tool_class=invocation.tool_class,
-            subgoal=invocation.subgoal,
-            status=ToolStatus.SUCCESS,
-            structured_output={"summary": "leadtime_checked"},
-            next_tool_id="scenario_tool",
-            next_subgoal=OperationalSubgoal.UPDATE_UNCERTAINTY,
-        ),
-    )
-    scenario_tool = FakeTool(
-        spec=ToolSpec(
-            tool_id="scenario_tool",
-            tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-            supported_subgoals=(OperationalSubgoal.UPDATE_UNCERTAINTY,),
-        ),
-        result_factory=lambda invocation: ToolResult(
-            tool_id=invocation.tool_id,
-            tool_class=invocation.tool_class,
-            subgoal=invocation.subgoal,
-            status=ToolStatus.SUCCESS,
-            structured_output={"summary": "scenario_checked"},
-            request_replan=bool(invocation.agent_assessment and invocation.agent_assessment.request_replan),
-        ),
-    )
+    tools = [
+        FakeTool(
+            spec=ToolSpec(
+                tool_id=tool_id,
+                tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
+                supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
+            ),
+            result_factory=lambda invocation: ToolResult(
+                tool_id=invocation.tool_id,
+                tool_class=invocation.tool_class,
+                subgoal=invocation.subgoal,
+                status=ToolStatus.SUCCESS,
+                structured_output={"summary": f"{invocation.tool_id}_checked"},
+                request_replan=bool(
+                    invocation.agent_assessment
+                    and invocation.agent_assessment.request_replan
+                ),
+            ),
+        )
+        for tool_id in CURRENT_TOOL_IDS
+    ]
     runtime = OrchestrationRuntime(
         agent_config=AgentConfig(
             enabled_regime_labels=(RegimeLabel.NORMAL, RegimeLabel.DEMAND_REGIME_SHIFT),
@@ -584,13 +624,13 @@ def test_runtime_supports_llm_orchestration_with_fake_client() -> None:
             ),
             allowed_tool_classes=(ToolClass.DETERMINISTIC_STATISTICAL,),
             minimum_confidence=0.6,
-            max_tool_steps=3,
+            max_tool_steps=5,
             allow_replan_requests=True,
             allow_abstain=True,
             llm_client_mode="fake",
             llm_model_name="gpt-4o-mini",
         ),
-        tools=[forecast_tool, leadtime_tool, scenario_tool],
+        tools=tools,
         mode=RuntimeMode.LLM_ORCHESTRATION,
         llm_orchestrator=LLMOrchestrator(
             client=FakeLLMClient(),
@@ -603,7 +643,7 @@ def test_runtime_supports_llm_orchestration_with_fake_client() -> None:
                 ),
                 allowed_tool_classes=(ToolClass.DETERMINISTIC_STATISTICAL,),
                 minimum_confidence=0.6,
-                max_tool_steps=3,
+                    max_tool_steps=5,
                 allow_replan_requests=True,
                 allow_abstain=True,
                 llm_client_mode="fake",
@@ -615,7 +655,7 @@ def test_runtime_supports_llm_orchestration_with_fake_client() -> None:
         mission=MissionSpec(
             mission_id="serial_mission",
             objective="Allow bounded LLM tool orchestration.",
-            admissible_tool_ids=("forecast_tool", "leadtime_tool", "scenario_tool"),
+            admissible_tool_ids=CURRENT_TOOL_IDS,
         ),
         system_state=SimulationState(
             benchmark_id=system_state.benchmark_id,
@@ -644,9 +684,9 @@ def test_runtime_supports_llm_orchestration_with_fake_client() -> None:
     assert response.step_telemetry is not None
     assert response.step_telemetry.provider == "fake_llm_client"
     assert response.step_telemetry.total_tokens == 144
-    assert response.signal.tool_sequence == ("forecast_tool", "leadtime_tool", "scenario_tool")
+    assert response.signal.tool_sequence == CURRENT_TOOL_IDS
     assert response.signal.request_replan is True
-    assert len(response.tool_call_traces) == 3
+    assert len(response.tool_call_traces) == 5
 
 
 def test_runtime_falls_back_safely_on_invalid_llm_output() -> None:

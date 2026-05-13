@@ -1,10 +1,20 @@
-# Keep all repo docs local; only the root README is intended for public sharing.
+# Keep repo documents local; README files are the only Markdown docs intended
+# for public sharing.
 docs/
 Manuscript/
 AGENTS.md
+*.md
+!README.md
+!**/README.md
+*.pdf
+*.doc
+*.docx
+*.tex
+*.bib
 .venv/
 .env
 .env.*
+!.env.example
 .tmp*/
 tmp*/
 *.tmp
@@ -16,6 +26,7 @@ __pycache__/
 results/*
 !results/.gitkeep
 .pytest_cache/
+pytest-cache-files-*/
 .mypy_cache/
 .ruff_cache/
 .coverage

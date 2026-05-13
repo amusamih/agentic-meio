@@ -56,7 +56,11 @@ def _write_temp_backtest_inputs(tmp_path: Path) -> Path:
                 "forecast_update_window_days = 1",
                 "evaluation_horizon_days = 4",
                 "roll_forward_stride_days = 1",
-                'mode_set = ["deterministic_baseline", "deterministic_orchestrator"]',
+                (
+                    'mode_set = ["deterministic_baseline", "robust_policy", '
+                    '"scenario_rolling_horizon_policy", '
+                    '"llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"]'
+                ),
                 f'results_dir = "{(tmp_path / "results").as_posix()}"',
             )
         )
@@ -101,7 +105,11 @@ def _write_temp_backtest_panel_inputs(tmp_path: Path) -> Path:
                 'agent_config = "configs/agent/base.toml"',
                 'discovery_module = "TempDataset"',
                 f'dataset_root = "{tmp_path.as_posix()}"',
-                'mode_set = ["deterministic_baseline", "deterministic_orchestrator"]',
+                (
+                    'mode_set = ["deterministic_baseline", "robust_policy", '
+                    '"scenario_rolling_horizon_policy", '
+                    '"llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"]'
+                ),
                 f'results_dir = "{(tmp_path / "results").as_posix()}"',
                 "",
                 "[[slices]]",
@@ -148,7 +156,9 @@ def test_run_real_demand_backtest_batch_preserves_optimizer_boundary() -> None:
         assert batch.aggregate_summary.validation_lane == "real_demand_backtest"
         assert {run.mode for run in batch.runs} == {
             "deterministic_baseline",
-            "deterministic_orchestrator",
+            "robust_policy",
+            "scenario_rolling_horizon_policy",
+            "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
         }
         assert all(
             run.episode_summary_record.validation_lane == "real_demand_backtest"
@@ -157,6 +167,42 @@ def test_run_real_demand_backtest_batch_preserves_optimizer_boundary() -> None:
         assert all(
             run.episode_summary_record.optimizer_order_boundary_preserved
             for run in batch.runs
+        )
+        assert all(
+            run.llm_call_trace_records == ()
+            for run in batch.runs
+            if run.mode in {"robust_policy", "scenario_rolling_horizon_policy"}
+        )
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_run_real_demand_backtest_supports_latest_guarded_agentic_mode() -> None:
+    tmp_path = Path(".tmp_demand_backtest_latest_mode_tests") / uuid4().hex
+    config_path = _write_temp_backtest_inputs(tmp_path)
+    try:
+        batch = run_real_demand_backtest_batch(
+            config_path,
+            mode="llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
+            llm_client_mode_override="fake",
+        )
+
+        assert len(batch.runs) == 1
+        run = batch.runs[0]
+        assert run.mode == "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"
+        assert run.summary.optimizer_order_boundary_preserved
+        assert run.llm_call_trace_records
+        assert {
+            "regime_diagnosis_tool",
+            "regime_belief_tool",
+            "scenario_candidate_generator_tool",
+            "risk_sensitive_scenario_evaluator_tool",
+            "counterfactual_regret_guard_tool",
+        }.issubset({trace.tool_id for trace in run.tool_call_trace_records})
+        assert all(
+            not tool_result.emits_raw_orders
+            for response in run.orchestration_responses
+            for tool_result in response.tool_results
         )
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
@@ -216,6 +262,27 @@ def test_write_demand_backtest_panel_artifacts_preserves_slice_identity() -> Non
             (panel_run.output_dir / "episode_summaries.jsonl").read_text(encoding="utf-8").splitlines()[0]
         )
         assert episode_payload["optimizer_order_boundary_preserved"] is True
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_write_demand_backtest_panel_artifacts_supports_single_mode_override() -> None:
+    tmp_path = Path(".tmp_demand_backtest_panel_mode_tests") / uuid4().hex
+    config_path = _write_temp_backtest_panel_inputs(tmp_path)
+    try:
+        panel_run = write_demand_backtest_panel_artifacts(
+            config_path,
+            mode="robust_policy",
+            llm_client_mode_override="fake",
+        )
+
+        assert panel_run.aggregate_summary is not None
+        assert panel_run.aggregate_summary.mode_names == ("robust_policy",)
+        assert all(result.success for result in panel_run.slice_results)
+        aggregate_payload = json.loads(
+            (panel_run.output_dir / "aggregate_summary.json").read_text(encoding="utf-8")
+        )
+        assert aggregate_payload["mode_names"] == ["robust_policy"]
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 

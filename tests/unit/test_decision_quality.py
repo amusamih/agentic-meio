@@ -3,12 +3,14 @@ from __future__ import annotations
 from meio.evaluation.decision_quality import compute_decision_quality
 from meio.evaluation.logging_schema import StepTraceRecord
 
+CURRENT_AGENTIC_MODE = "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"
+
 
 def test_compute_decision_quality_tracks_regime_accuracy_and_interventions() -> None:
     records = (
         StepTraceRecord(
             episode_id="episode_1",
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             tool_ablation_variant="full",
             schedule_name="shift_recovery",
             run_seed=20260417,
@@ -40,7 +42,7 @@ def test_compute_decision_quality_tracks_regime_accuracy_and_interventions() -> 
         ),
         StepTraceRecord(
             episode_id="episode_1",
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             tool_ablation_variant="full",
             schedule_name="shift_recovery",
             run_seed=20260417,
@@ -49,7 +51,13 @@ def test_compute_decision_quality_tracks_regime_accuracy_and_interventions() -> 
             predicted_regime_label="demand_regime_shift",
             confidence=0.86,
             selected_subgoal="request_replan",
-            selected_tools=("forecast_tool", "leadtime_tool", "scenario_tool"),
+            selected_tools=(
+                "regime_diagnosis_tool",
+                "regime_belief_tool",
+                "scenario_candidate_generator_tool",
+                "risk_sensitive_scenario_evaluator_tool",
+                "counterfactual_regret_guard_tool",
+            ),
             update_requests=("switch_demand_regime", "widen_uncertainty"),
             request_replan=True,
             abstain_or_no_action=False,
@@ -72,7 +80,7 @@ def test_compute_decision_quality_tracks_regime_accuracy_and_interventions() -> 
         ),
         StepTraceRecord(
             episode_id="episode_1",
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             tool_ablation_variant="full",
             schedule_name="shift_recovery",
             run_seed=20260417,

@@ -18,6 +18,14 @@ from meio.agents.llm_client import (
 from meio.agents.telemetry import ClientErrorCategory
 from meio.contracts import RegimeLabel
 
+REGRET_GUARDED_TOOL_SEQUENCE = (
+    "regime_diagnosis_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+    "counterfactual_regret_guard_tool",
+)
+
 
 def build_request(regime_label: RegimeLabel) -> LLMCompletionRequest:
     return LLMCompletionRequest(
@@ -35,8 +43,8 @@ def build_request(regime_label: RegimeLabel) -> LLMCompletionRequest:
             leadtime_value=2.0,
             inventory_level=(20.0, 30.0, 40.0),
             backorder_level=(0.0, 0.0, 0.0),
-            available_tool_ids=("forecast_tool", "leadtime_tool", "scenario_tool"),
-            max_tool_steps=3,
+            available_tool_ids=REGRET_GUARDED_TOOL_SEQUENCE,
+            max_tool_steps=5,
         ),
     )
 
@@ -49,10 +57,10 @@ def test_fake_llm_client_returns_deterministic_json() -> None:
     assert response.telemetry is not None
     assert response.telemetry.total_tokens == 144
     assert payload["selected_subgoal"] == "query_uncertainty"
-    assert "scenario_tool" in payload["candidate_tool_ids"]
+    assert payload["candidate_tool_ids"] == list(REGRET_GUARDED_TOOL_SEQUENCE)
 
 
-def test_fake_llm_client_respects_available_tool_set_in_ablation() -> None:
+def test_fake_llm_client_requests_no_tools_when_current_sequence_is_unavailable() -> None:
     request = build_request(RegimeLabel.DEMAND_REGIME_SHIFT)
     request = LLMCompletionRequest(
         model=request.model,
@@ -66,7 +74,7 @@ def test_fake_llm_client_respects_available_tool_set_in_ablation() -> None:
             leadtime_value=request.context.leadtime_value,
             inventory_level=request.context.inventory_level,
             backorder_level=request.context.backorder_level,
-            available_tool_ids=("leadtime_tool", "scenario_tool"),
+            available_tool_ids=("regime_diagnosis_tool",),
             max_tool_steps=request.context.max_tool_steps,
         ),
     )
@@ -74,8 +82,8 @@ def test_fake_llm_client_respects_available_tool_set_in_ablation() -> None:
     response = FakeLLMClient().complete(request)
     payload = json.loads(response.content)
 
-    assert payload["candidate_tool_ids"] == ["leadtime_tool", "scenario_tool"]
-    assert payload["selected_subgoal"] == "query_uncertainty"
+    assert payload["candidate_tool_ids"] == []
+    assert payload["selected_subgoal"] == "request_replan"
 
 
 def test_openai_client_fails_clearly_without_credentials(monkeypatch: pytest.MonkeyPatch) -> None:

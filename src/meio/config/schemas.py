@@ -15,19 +15,18 @@ from meio.contracts import (
 
 ALLOWED_RUNTIME_MODES = (
     "deterministic_baseline",
-    "deterministic_orchestrator",
-    "llm_orchestrator",
+    "robust_policy",
+    "scenario_rolling_horizon_policy",
+    "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
 )
 DEFAULT_RUNTIME_MODE_SET = (
     "deterministic_baseline",
-    "deterministic_orchestrator",
-    "llm_orchestrator",
+    "robust_policy",
+    "scenario_rolling_horizon_policy",
+    "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
 )
 ALLOWED_TOOL_ABLATION_VARIANTS = (
     "full",
-    "no_forecast_tool",
-    "no_leadtime_tool",
-    "no_scenario_tool",
 )
 ALLOWED_VALIDATION_LANES = (
     "stockpyl_internal",
@@ -181,6 +180,91 @@ class RegimeScheduleConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class RobustPolicyConfig:
+    """Configuration for the non-LLM robust uncertainty-protected baseline."""
+
+    window_length: int = 6
+    quantile: float = 0.80
+    safety_buffer_scale: float = 1.05
+
+    def __post_init__(self) -> None:
+        _validate_positive_int(self.window_length, "robust_policy.window_length")
+        _validate_probability(self.quantile, "robust_policy.quantile")
+        if self.quantile <= 0.0:
+            raise ValueError("robust_policy.quantile must be greater than 0.0.")
+        if self.safety_buffer_scale <= 0.0:
+            raise ValueError("robust_policy.safety_buffer_scale must be positive.")
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioRollingHorizonPolicyConfig:
+    """Configuration for the non-LLM scenario rolling-horizon baseline."""
+
+    horizon_length: int = 3
+    scenario_count: int = 8
+    random_seed: int = 20260417
+    demand_multipliers: tuple[float, ...] = (0.95, 1.0, 1.10, 1.25)
+    leadtime_multipliers: tuple[float, ...] = (1.0, 1.15)
+    safety_buffer_scales: tuple[float, ...] = (1.0, 1.05, 1.10)
+
+    def __post_init__(self) -> None:
+        _validate_positive_int(
+            self.horizon_length,
+            "scenario_rolling_horizon_policy.horizon_length",
+        )
+        _validate_positive_int(
+            self.scenario_count,
+            "scenario_rolling_horizon_policy.scenario_count",
+        )
+        _validate_non_negative_int(
+            self.random_seed,
+            "scenario_rolling_horizon_policy.random_seed",
+        )
+        object.__setattr__(self, "demand_multipliers", tuple(self.demand_multipliers))
+        object.__setattr__(self, "leadtime_multipliers", tuple(self.leadtime_multipliers))
+        object.__setattr__(
+            self,
+            "safety_buffer_scales",
+            tuple(self.safety_buffer_scales),
+        )
+        for field_name in (
+            "demand_multipliers",
+            "leadtime_multipliers",
+            "safety_buffer_scales",
+        ):
+            values = getattr(self, field_name)
+            if not values:
+                raise ValueError(f"scenario_rolling_horizon_policy.{field_name} must not be empty.")
+            for value in values:
+                if value <= 0.0:
+                    raise ValueError(
+                        f"scenario_rolling_horizon_policy.{field_name} values must be positive."
+                    )
+
+
+@dataclass(frozen=True, slots=True)
+class UncertaintyBaselineConfig:
+    """Grouped configuration for non-agentic uncertainty-handling baselines."""
+
+    robust_policy: RobustPolicyConfig = field(default_factory=RobustPolicyConfig)
+    scenario_rolling_horizon_policy: ScenarioRollingHorizonPolicyConfig = field(
+        default_factory=ScenarioRollingHorizonPolicyConfig
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.robust_policy, RobustPolicyConfig):
+            raise TypeError("robust_policy must be a RobustPolicyConfig.")
+        if not isinstance(
+            self.scenario_rolling_horizon_policy,
+            ScenarioRollingHorizonPolicyConfig,
+        ):
+            raise TypeError(
+                "scenario_rolling_horizon_policy must be a "
+                "ScenarioRollingHorizonPolicyConfig."
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class ExperimentConfig:
     """Configuration for a reproducible experiment run."""
 
@@ -194,6 +278,9 @@ class ExperimentConfig:
     seed_set: tuple[int, ...] = field(default_factory=tuple)
     mode_set: tuple[str, ...] = field(default_factory=lambda: DEFAULT_RUNTIME_MODE_SET)
     tool_ablation_variants: tuple[str, ...] = field(default_factory=lambda: ("full",))
+    uncertainty_baselines: UncertaintyBaselineConfig = field(
+        default_factory=UncertaintyBaselineConfig
+    )
     results_dir: Path = Path("results")
 
     def __post_init__(self) -> None:
@@ -241,6 +328,8 @@ class ExperimentConfig:
                 "tool_ablation_variants",
                 ALLOWED_TOOL_ABLATION_VARIANTS,
             )
+        if not isinstance(self.uncertainty_baselines, UncertaintyBaselineConfig):
+            raise TypeError("uncertainty_baselines must be an UncertaintyBaselineConfig.")
         if not isinstance(self.results_dir, Path):
             raise TypeError("results_dir must be a Path.")
 
@@ -345,6 +434,9 @@ class PublicBenchmarkEvalConfig:
     episode_horizon_steps: int = 10
     base_stock_multiplier: float = 1.0
     demand_scale_epsilon: float = 1e-6
+    uncertainty_baselines: UncertaintyBaselineConfig = field(
+        default_factory=UncertaintyBaselineConfig
+    )
     results_dir: Path = Path("results/public_benchmark_eval")
 
     def __post_init__(self) -> None:
@@ -372,6 +464,8 @@ class PublicBenchmarkEvalConfig:
             _validate_choice(mode, "mode_set", ALLOWED_RUNTIME_MODES)
         _validate_positive_int(self.episode_horizon_steps, "episode_horizon_steps")
         _validate_non_negative_number(self.base_stock_multiplier, "base_stock_multiplier")
+        if not isinstance(self.uncertainty_baselines, UncertaintyBaselineConfig):
+            raise TypeError("uncertainty_baselines must be an UncertaintyBaselineConfig.")
         if self.base_stock_multiplier <= 0.0:
             raise ValueError("base_stock_multiplier must be positive.")
         _validate_non_negative_number(self.demand_scale_epsilon, "demand_scale_epsilon")
@@ -447,6 +541,9 @@ class RealDemandBacktestConfig:
     evaluation_start_date: str | None = None
     roll_forward_stride_days: int = 1
     mode_set: tuple[str, ...] = field(default_factory=lambda: DEFAULT_RUNTIME_MODE_SET)
+    uncertainty_baselines: UncertaintyBaselineConfig = field(
+        default_factory=UncertaintyBaselineConfig
+    )
     results_dir: Path = Path("results/real_demand_backtest")
 
     def __post_init__(self) -> None:
@@ -487,6 +584,8 @@ class RealDemandBacktestConfig:
             raise ValueError("mode_set must not be empty.")
         for mode in self.mode_set:
             _validate_choice(mode, "mode_set", ALLOWED_RUNTIME_MODES)
+        if not isinstance(self.uncertainty_baselines, UncertaintyBaselineConfig):
+            raise TypeError("uncertainty_baselines must be an UncertaintyBaselineConfig.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -499,6 +598,9 @@ class RealDemandBacktestPanelConfig:
     discovery_module: str = "ReplenishmentEnv"
     dataset_root: Path | None = None
     mode_set: tuple[str, ...] = field(default_factory=lambda: DEFAULT_RUNTIME_MODE_SET)
+    uncertainty_baselines: UncertaintyBaselineConfig = field(
+        default_factory=UncertaintyBaselineConfig
+    )
     results_dir: Path = Path("results/real_demand_backtest")
     slices: tuple[RealDemandBacktestSliceConfig, ...] = field(default_factory=tuple)
 
@@ -518,6 +620,8 @@ class RealDemandBacktestPanelConfig:
             raise ValueError("slices must not be empty.")
         for mode in self.mode_set:
             _validate_choice(mode, "mode_set", ALLOWED_RUNTIME_MODES)
+        if not isinstance(self.uncertainty_baselines, UncertaintyBaselineConfig):
+            raise TypeError("uncertainty_baselines must be an UncertaintyBaselineConfig.")
         slice_names = tuple(slice_config.name for slice_config in self.slices)
         if len(slice_names) != len(set(slice_names)):
             raise ValueError("slices must use unique names.")
@@ -550,6 +654,7 @@ class RealDemandBacktestPanelConfig:
                 evaluation_start_date=slice_config.evaluation_start_date,
                 roll_forward_stride_days=slice_config.roll_forward_stride_days,
                 mode_set=self.mode_set,
+                uncertainty_baselines=self.uncertainty_baselines,
                 results_dir=self.results_dir,
             )
             for slice_config in self.slices
@@ -570,6 +675,9 @@ __all__ = [
     "RealDemandBacktestPanelConfig",
     "RealDemandBacktestSliceConfig",
     "RegimeScheduleConfig",
+    "RobustPolicyConfig",
+    "ScenarioRollingHorizonPolicyConfig",
     "SerialStageConfig",
     "SerialSystemConfig",
+    "UncertaintyBaselineConfig",
 ]

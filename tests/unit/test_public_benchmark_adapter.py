@@ -12,7 +12,9 @@ from meio.benchmarks.public_benchmark_adapter import (
     inspect_replenishmentenv_installation,
     locate_package_root,
     map_optimizer_orders_to_public_benchmark_actions,
+    run_public_benchmark_execution,
 )
+from meio.config.loaders import load_public_benchmark_eval_config
 import scripts.run_public_benchmark_eval as run_public_benchmark_eval_script
 
 
@@ -197,3 +199,52 @@ def test_map_optimizer_orders_to_public_benchmark_actions_clips_negative_quantit
     )
 
     assert np.allclose(actions, np.array([[0.0, 3.0]], dtype=np.float32))
+
+
+def test_public_benchmark_execution_supports_native_latest_agentic_mode() -> None:
+    config = load_public_benchmark_eval_config(
+        "configs/experiment/public_benchmark_realistic_comparison.toml"
+    )
+    config = config.__class__(
+        experiment_name=config.experiment_name,
+        benchmark_candidate=config.benchmark_candidate,
+        discovery_module=config.discovery_module,
+        benchmark_root=config.benchmark_root,
+        demo_config_path=config.demo_config_path,
+        agent_config_path=Path("configs/agent/base.toml"),
+        environment_config_name=config.environment_config_name,
+        wrapper_names=config.wrapper_names,
+        benchmark_mode=config.benchmark_mode,
+        smoke_horizon_steps=config.smoke_horizon_steps,
+        mode_set=("llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",),
+        episode_horizon_steps=1,
+        base_stock_multiplier=config.base_stock_multiplier,
+        demand_scale_epsilon=config.demand_scale_epsilon,
+        uncertainty_baselines=config.uncertainty_baselines,
+        results_dir=config.results_dir,
+    )
+
+    batch = run_public_benchmark_execution(
+        config=config,
+        selected_modes=config.mode_set,
+        llm_client_mode_override="fake",
+    )
+
+    assert batch.aggregate_summary is not None
+    assert len(batch.mode_artifacts) == 1
+    artifact = batch.mode_artifacts[0]
+    assert artifact.mode_summary.mode == (
+        "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"
+    )
+    assert artifact.mode_summary.step_count == 1
+    assert {
+        "regime_diagnosis_tool",
+        "regime_belief_tool",
+        "scenario_candidate_generator_tool",
+        "risk_sensitive_scenario_evaluator_tool",
+    }.issubset({record.tool_id for record in artifact.tool_call_trace_records})
+    assert {
+        "counterfactual_regret_guard_tool",
+        "risk_sensitive_scenario_evaluator_tool",
+    }.intersection({record.tool_id for record in artifact.tool_call_trace_records})
+    assert artifact.episode_summary_record.optimizer_order_boundary_preserved

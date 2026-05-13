@@ -18,8 +18,11 @@ from meio.config.schemas import (
     RealDemandBacktestPanelConfig,
     RealDemandBacktestSliceConfig,
     RegimeScheduleConfig,
+    RobustPolicyConfig,
+    ScenarioRollingHorizonPolicyConfig,
     SerialStageConfig,
     SerialSystemConfig,
+    UncertaintyBaselineConfig,
 )
 from meio.contracts import (
     BackorderPolicy,
@@ -91,6 +94,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     document = _load_toml_document(path)
     experiment_table = _require_table(document, "experiment")
     regime_schedule_tables = _optional_list(document, "regime_schedules")
+    uncertainty_baselines = _load_uncertainty_baseline_config(document)
 
     agent_path = experiment_table.get("agent_config")
     if agent_path is not None and not isinstance(agent_path, str):
@@ -157,6 +161,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
                 default=["full"],
             )
         ),
+        uncertainty_baselines=uncertainty_baselines,
         results_dir=Path(_require_string(experiment_table, "results_dir", "experiment")),
     )
 
@@ -248,6 +253,7 @@ def load_public_benchmark_eval_config(path: str | Path) -> PublicBenchmarkEvalCo
 
     document = _load_toml_document(path)
     experiment_table = _require_table(document, "experiment")
+    uncertainty_baselines = _load_uncertainty_baseline_config(document)
     return PublicBenchmarkEvalConfig(
         experiment_name=_require_string(experiment_table, "name", "experiment"),
         benchmark_candidate=_require_string(
@@ -334,6 +340,7 @@ def load_public_benchmark_eval_config(path: str | Path) -> PublicBenchmarkEvalCo
             "experiment",
             default=1e-6,
         ),
+        uncertainty_baselines=uncertainty_baselines,
         results_dir=Path(_require_string(experiment_table, "results_dir", "experiment")),
     )
 
@@ -343,6 +350,7 @@ def load_real_demand_backtest_config(path: str | Path) -> RealDemandBacktestConf
 
     document = _load_toml_document(path)
     experiment_table = _require_table(document, "experiment")
+    uncertainty_baselines = _load_uncertainty_baseline_config(document)
     return RealDemandBacktestConfig(
         experiment_name=_require_string(experiment_table, "name", "experiment"),
         benchmark_config_path=Path(
@@ -442,6 +450,7 @@ def load_real_demand_backtest_config(path: str | Path) -> RealDemandBacktestConf
                 default=list(DEFAULT_RUNTIME_MODE_SET),
             )
         ),
+        uncertainty_baselines=uncertainty_baselines,
         results_dir=Path(_require_string(experiment_table, "results_dir", "experiment")),
     )
 
@@ -452,6 +461,7 @@ def load_real_demand_backtest_panel_config(path: str | Path) -> RealDemandBackte
     document = _load_toml_document(path)
     experiment_table = _require_table(document, "experiment")
     slice_tables = _optional_list(document, "slices")
+    uncertainty_baselines = _load_uncertainty_baseline_config(document)
     return RealDemandBacktestPanelConfig(
         experiment_name=_require_string(experiment_table, "name", "experiment"),
         benchmark_config_path=Path(
@@ -479,6 +489,7 @@ def load_real_demand_backtest_panel_config(path: str | Path) -> RealDemandBackte
                 default=list(DEFAULT_RUNTIME_MODE_SET),
             )
         ),
+        uncertainty_baselines=uncertainty_baselines,
         results_dir=Path(_require_string(experiment_table, "results_dir", "experiment")),
         slices=tuple(
             RealDemandBacktestSliceConfig(
@@ -555,6 +566,88 @@ def load_real_demand_backtest_panel_config(path: str | Path) -> RealDemandBackte
     )
 
 
+def _load_uncertainty_baseline_config(
+    document: dict[str, Any],
+) -> UncertaintyBaselineConfig:
+    parent = document.get("uncertainty_baselines", {})
+    if parent is None:
+        parent = {}
+    if not isinstance(parent, dict):
+        raise ValueError("uncertainty_baselines must be a TOML table when provided.")
+    robust_table = _optional_subtable(parent, "robust_policy", "uncertainty_baselines")
+    rolling_table = _optional_subtable(
+        parent,
+        "scenario_rolling_horizon_policy",
+        "uncertainty_baselines",
+    )
+    return UncertaintyBaselineConfig(
+        robust_policy=RobustPolicyConfig(
+            window_length=_optional_int(
+                robust_table,
+                "window_length",
+                "uncertainty_baselines.robust_policy",
+                default=6,
+            ),
+            quantile=_optional_number(
+                robust_table,
+                "quantile",
+                "uncertainty_baselines.robust_policy",
+                default=0.80,
+            ),
+            safety_buffer_scale=_optional_number(
+                robust_table,
+                "safety_buffer_scale",
+                "uncertainty_baselines.robust_policy",
+                default=1.05,
+            ),
+        ),
+        scenario_rolling_horizon_policy=ScenarioRollingHorizonPolicyConfig(
+            horizon_length=_optional_int(
+                rolling_table,
+                "horizon_length",
+                "uncertainty_baselines.scenario_rolling_horizon_policy",
+                default=3,
+            ),
+            scenario_count=_optional_int(
+                rolling_table,
+                "scenario_count",
+                "uncertainty_baselines.scenario_rolling_horizon_policy",
+                default=8,
+            ),
+            random_seed=_optional_int(
+                rolling_table,
+                "random_seed",
+                "uncertainty_baselines.scenario_rolling_horizon_policy",
+                default=20260417,
+            ),
+            demand_multipliers=tuple(
+                _optional_number_list(
+                    rolling_table,
+                    "demand_multipliers",
+                    "uncertainty_baselines.scenario_rolling_horizon_policy",
+                    default=[0.95, 1.0, 1.10, 1.25],
+                )
+            ),
+            leadtime_multipliers=tuple(
+                _optional_number_list(
+                    rolling_table,
+                    "leadtime_multipliers",
+                    "uncertainty_baselines.scenario_rolling_horizon_policy",
+                    default=[1.0, 1.15],
+                )
+            ),
+            safety_buffer_scales=tuple(
+                _optional_number_list(
+                    rolling_table,
+                    "safety_buffer_scales",
+                    "uncertainty_baselines.scenario_rolling_horizon_policy",
+                    default=[1.0, 1.05, 1.10],
+                )
+            ),
+        ),
+    )
+
+
 def _load_toml_document(path: str | Path) -> dict[str, Any]:
     path = Path(path)
     try:
@@ -583,6 +676,19 @@ def _optional_list(document: dict[str, Any], key: str) -> list[dict[str, Any]]:
     for item in value:
         if not isinstance(item, dict):
             raise ValueError(f"{key} entries must be TOML tables.")
+    return value
+
+
+def _optional_subtable(
+    document: dict[str, Any],
+    key: str,
+    location: str,
+) -> dict[str, Any]:
+    value = document.get(key, {})
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{location}.{key} must be a TOML table.")
     return value
 
 
@@ -722,6 +828,25 @@ def _optional_int_list(
         if isinstance(item, bool) or not isinstance(item, int):
             raise ValueError(f"{location}.{key} must contain integers.")
         result.append(item)
+    return result
+
+
+def _optional_number_list(
+    document: dict[str, Any],
+    key: str,
+    location: str,
+    default: list[float],
+) -> list[float]:
+    if key not in document:
+        return list(default)
+    value = document.get(key)
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{location}.{key} must be a non-empty list of numbers.")
+    result: list[float] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise ValueError(f"{location}.{key} must contain numbers.")
+        result.append(float(item))
     return result
 
 

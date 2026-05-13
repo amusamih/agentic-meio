@@ -1,5 +1,5 @@
 [experiment]
-name = "stockpyl_serial_frozen_broad_eval"
+name = "stockpyl_serial_realistic_comparison"
 benchmark_config = "configs/benchmark/serial_3_echelon.toml"
 agent_config = "configs/agent/live_llm.toml"
 episode_count = 3
@@ -11,7 +11,7 @@ mode_set = [
     "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
 ]
 tool_ablation_variants = ["full"]
-results_dir = "results/stockpyl_serial_frozen_broad_eval"
+results_dir = "results/stockpyl_serial_realistic_comparison"
 
 [uncertainty_baselines.robust_policy]
 window_length = 6

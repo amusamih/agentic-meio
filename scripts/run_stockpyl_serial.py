@@ -16,15 +16,28 @@ from meio.agents.llm_client import FakeLLMClient, OpenAILLMClient
 from meio.agents.llm_orchestrator import LLMOrchestrator
 from meio.agents.prompts import PROMPT_VERSION, prompt_contract_hash
 from meio.agents.runtime import OrchestrationResponse, OrchestrationRuntime, RuntimeMode
+from meio.agents.scenario_planner import (
+    CounterfactualRegretGuardTool,
+    RegimeBeliefTool,
+    RegimeDiagnosisTool,
+    RiskSensitiveScenarioEvaluatorTool,
+    ScenarioCandidateGeneratorTool,
+)
 from meio.agents.telemetry import (
     EpisodeTelemetrySummary,
     OrchestrationStepTelemetry,
     summarize_episode_telemetry,
 )
+from meio.agents.uncertainty_baselines import (
+    UncertaintyPolicy,
+    build_uncertainty_policy,
+    is_uncertainty_policy_mode,
+)
 from meio.config.loaders import load_agent_config, load_benchmark_config, load_experiment_config
 from meio.config.schemas import (
     AgentConfig,
     ExperimentConfig,
+    UncertaintyBaselineConfig,
 )
 from meio.contracts import MissionSpec, OperationalSubgoal, RegimeLabel, UpdateRequestType
 from meio.data.stockpyl_adapter import StockpylSerialAdapter
@@ -80,11 +93,8 @@ from meio.evaluation.summaries import (
     TraceSummary,
     build_episode_summary_record,
 )
-from meio.forecasting.adapters import DeterministicForecastTool
-from meio.leadtime.adapters import DeterministicLeadTimeTool
 from meio.optimization.adapters import TrustedOptimizerAdapter, build_optimization_request
 from meio.optimization.contracts import OptimizationRequest, OptimizationResult
-from meio.scenarios.adapters import DeterministicScenarioTool
 from meio.scenarios.contracts import (
     ScenarioAdjustmentSummary,
     ScenarioSummary,
@@ -104,18 +114,26 @@ from meio.simulation.state import EpisodeTrace, PeriodTraceRecord
 
 
 DEFAULT_EXPERIMENT_CONFIG = Path("configs/experiment/stockpyl_serial.toml")
-LEGACY_COMPARISON_MODES = (
+REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE = (
+    "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"
+)
+OFFICIAL_COMPARISON_MODES = (
     "deterministic_baseline",
-    "deterministic_orchestrator",
-    "llm_orchestrator",
+    "robust_policy",
+    "scenario_rolling_horizon_policy",
+    REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
 )
 VALIDATION_LANE = "stockpyl_internal"
 TOOL_IDS_BY_ABLATION = {
-    "full": ("forecast_tool", "leadtime_tool", "scenario_tool"),
-    "no_forecast_tool": ("leadtime_tool", "scenario_tool"),
-    "no_leadtime_tool": ("forecast_tool", "scenario_tool"),
-    "no_scenario_tool": ("forecast_tool", "leadtime_tool"),
+    "full": (),
 }
+REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS = (
+    "regime_diagnosis_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+    "counterfactual_regret_guard_tool",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,37 +263,6 @@ class StockpylSerialRun:
                 self.episode_summary_record.hysteresis_application_count
             )
         return summary
-
-
-@dataclass(frozen=True, slots=True)
-class StockpylSerialComparison:
-    """Structured single-run comparison across the supported rollout modes."""
-
-    benchmark_case: SerialBenchmarkCase
-    schedule_name: str
-    run_seed: int
-    regime_schedule: tuple[RegimeLabel, ...]
-    deterministic_baseline: StockpylSerialRun
-    deterministic_orchestrator: StockpylSerialRun
-    llm_orchestrator: StockpylSerialRun
-    outcomes_differ: bool
-    optimizer_order_boundary_preserved: bool
-
-    def to_summary(self) -> dict[str, object]:
-        """Return a compact JSON-serializable comparison summary."""
-
-        return {
-            "benchmark_id": self.benchmark_case.benchmark_id,
-            "benchmark_source": self.benchmark_case.adapter_name,
-            "schedule_name": self.schedule_name,
-            "run_seed": self.run_seed,
-            "regime_schedule": [label.value for label in self.regime_schedule],
-            "outcomes_differ": self.outcomes_differ,
-            "optimizer_order_boundary_preserved": self.optimizer_order_boundary_preserved,
-            "deterministic_baseline": self.deterministic_baseline.to_summary(),
-            "deterministic_orchestrator": self.deterministic_orchestrator.to_summary(),
-            "llm_orchestrator": self.llm_orchestrator.to_summary(),
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,57 +440,6 @@ class StockpylSerialModeBatch:
             "runs": [run.to_summary() for run in self.runs],
         }
 
-
-@dataclass(frozen=True, slots=True)
-class StockpylSerialComparisonBatch:
-    """Repeated-run comparison across deterministic and LLM paths."""
-
-    benchmark_case: SerialBenchmarkCase
-    schedule_names: tuple[str, ...]
-    seed_values: tuple[int, ...]
-    tool_ablation_variants: tuple[str, ...]
-    deterministic_baseline: StockpylSerialModeBatch
-    deterministic_orchestrator: StockpylSerialModeBatch
-    llm_orchestrator: StockpylSerialModeBatch
-    outcomes_differ: bool
-    optimizer_order_boundary_preserved: bool
-    aggregate_results: BatchAggregateSummary | None = None
-
-    def to_summary(self) -> dict[str, object]:
-        """Return a compact JSON-serializable repeated-run comparison summary."""
-
-        return {
-            "benchmark_id": self.benchmark_case.benchmark_id,
-            "benchmark_source": self.benchmark_case.adapter_name,
-            "schedule_names": list(self.schedule_names),
-            "seed_values": list(self.seed_values),
-            "tool_ablation_variants": list(self.tool_ablation_variants),
-            "outcomes_differ": self.outcomes_differ,
-            "optimizer_order_boundary_preserved": self.optimizer_order_boundary_preserved,
-            "artifact_use_class": (
-                self.aggregate_results.artifact_use_class.value
-                if self.aggregate_results is not None
-                else None
-            ),
-            "validity_gate_passed": (
-                self.aggregate_results.validity_gate_passed
-                if self.aggregate_results is not None
-                else None
-            ),
-            "eligibility_notes": (
-                list(self.aggregate_results.eligibility_notes)
-                if self.aggregate_results is not None
-                else []
-            ),
-            "deterministic_baseline": self.deterministic_baseline.to_summary(),
-            "deterministic_orchestrator": self.deterministic_orchestrator.to_summary(),
-            "llm_orchestrator": self.llm_orchestrator.to_summary(),
-            "aggregate_results": (
-                jsonable(self.aggregate_results) if self.aggregate_results is not None else None
-            ),
-        }
-
-
 @dataclass(frozen=True, slots=True)
 class StockpylSerialModeSweep:
     """Generic repeated-run sweep across an explicit configured mode set."""
@@ -609,7 +545,10 @@ def _normalize_mode_alias(mode: str) -> str:
 
 
 def _mode_uses_llm(mode: str) -> bool:
-    return _normalize_mode_alias(mode) == "llm_orchestrator"
+    return (
+        _normalize_mode_alias(mode)
+        == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE
+    )
 
 
 def _resolve_agent_config(
@@ -662,12 +601,20 @@ def _candidate_tool_ids_for_ablation(tool_ablation_variant: str) -> tuple[str, .
 
 def _candidate_tool_ids_for_mode(
     tool_ablation_variant: str,
+    mode: str = REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
 ) -> tuple[str, ...]:
-    return _candidate_tool_ids_for_ablation(tool_ablation_variant)
+    tool_ids = _candidate_tool_ids_for_ablation(tool_ablation_variant)
+    if (
+        _normalize_mode_alias(mode)
+        == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE
+    ):
+        return REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS
+    return tool_ids
 
 
 def _build_mission(
     tool_ablation_variant: str = "full",
+    mode: str = REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
 ) -> MissionSpec:
     return MissionSpec(
         mission_id="stockpyl_serial_controlled_rollout",
@@ -675,7 +622,7 @@ def _build_mission(
             "Inspect Stockpyl-backed serial evidence, manage bounded uncertainty, and "
             "keep replenishment orders inside the trusted optimizer boundary."
         ),
-        admissible_tool_ids=_candidate_tool_ids_for_mode(tool_ablation_variant),
+        admissible_tool_ids=_candidate_tool_ids_for_mode(tool_ablation_variant, mode),
     )
 
 
@@ -740,16 +687,32 @@ def _benchmark_case_for_seed(
     )
 
 
-def _build_runtime(agent_config: AgentConfig, *, mode: str) -> tuple[OrchestrationRuntime, str | None]:
+def _build_runtime(
+    agent_config: AgentConfig,
+    *,
+    mode: str,
+    benchmark_case: SerialBenchmarkCase,
+    uncertainty_config: UncertaintyBaselineConfig,
+) -> tuple[OrchestrationRuntime, str | None]:
     normalized_mode = _normalize_mode_alias(mode)
-    tools = (
-        DeterministicForecastTool(),
-        DeterministicLeadTimeTool(),
-        DeterministicScenarioTool(),
-    )
-    if normalized_mode == "deterministic_orchestrator":
-        return OrchestrationRuntime(agent_config=agent_config, tools=tools), None
-    if normalized_mode == "llm_orchestrator":
+    if (
+        normalized_mode
+        == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE
+    ):
+        tools = (
+            RegimeDiagnosisTool(),
+            RegimeBeliefTool(),
+            ScenarioCandidateGeneratorTool(
+                benchmark_case=benchmark_case,
+                robust_config=uncertainty_config.robust_policy,
+                rolling_config=uncertainty_config.scenario_rolling_horizon_policy,
+            ),
+            RiskSensitiveScenarioEvaluatorTool(
+                benchmark_case=benchmark_case,
+                rolling_config=uncertainty_config.scenario_rolling_horizon_policy,
+            ),
+            CounterfactualRegretGuardTool(),
+        )
         client_mode = _normalize_llm_client_mode(agent_config.llm_client_mode)
         if client_mode == "real":
             if agent_config.llm_provider != "openai":
@@ -1066,6 +1029,7 @@ def _build_step_trace_record(
     cost_config,
     holding_cost_by_stage: tuple[float, ...],
     stockout_cost_by_stage: tuple[float, ...],
+    policy_diagnostics: dict[str, object] | None = None,
 ) -> StepTraceRecord:
     predicted_regime_label = None
     confidence = None
@@ -1170,6 +1134,7 @@ def _build_step_trace_record(
         unresolved_stress_moderation_applied=unresolved_stress_moderation_applied,
         calibration_reason=calibration_reason,
         moderation_reason=moderation_reason,
+        policy_diagnostics=policy_diagnostics,
         validation_lane=VALIDATION_LANE,
     )
 
@@ -1739,10 +1704,16 @@ def _run_orchestrated_rollout(
     evaluation_case: EvaluationCase,
     mode: str,
 ) -> StockpylSerialRun:
-    runtime, llm_provider = _build_runtime(agent_config, mode=mode)
-    mission = _build_mission(evaluation_case.tool_ablation_variant)
+    runtime, llm_provider = _build_runtime(
+        agent_config,
+        mode=mode,
+        benchmark_case=benchmark_case,
+        uncertainty_config=experiment_config.uncertainty_baselines,
+    )
+    mission = _build_mission(evaluation_case.tool_ablation_variant, mode)
     candidate_tool_ids = _candidate_tool_ids_for_mode(
-        evaluation_case.tool_ablation_variant
+        evaluation_case.tool_ablation_variant,
+        mode,
     )
     optimizer = TrustedOptimizerAdapter()
     episode_id = (
@@ -2274,6 +2245,213 @@ def _run_baseline_rollout(
     )
 
 
+def _run_uncertainty_policy_rollout(
+    experiment_config: ExperimentConfig,
+    benchmark_case: SerialBenchmarkCase,
+    *,
+    evaluation_case: EvaluationCase,
+    mode: str,
+    policy: UncertaintyPolicy,
+) -> StockpylSerialRun:
+    optimizer = TrustedOptimizerAdapter()
+    episode_id = (
+        f"{experiment_config.experiment_name}_{mode}_"
+        f"{evaluation_case.tool_ablation_variant}_"
+        f"{evaluation_case.schedule_name}_seed_{evaluation_case.run_seed}_"
+        f"run_{evaluation_case.case_index}"
+    )
+    system_state = build_initial_simulation_state(
+        benchmark_case,
+        regime_label=regime_for_period(evaluation_case.regime_schedule, 0),
+    )
+    trace = EpisodeTrace(
+        run_id=episode_id,
+        benchmark_id=benchmark_case.benchmark_id,
+    )
+    step_trace_records: list[StepTraceRecord] = []
+    for time_index in range(experiment_config.resolved_rollout_horizon()):
+        regime_label = regime_for_period(evaluation_case.regime_schedule, time_index)
+        previous_regime_label = (
+            trace.period_records[-1].regime_label if trace.period_records else None
+        )
+        observation = build_period_observation(
+            benchmark_case,
+            system_state,
+            regime_label,
+            previous_regime_label=previous_regime_label,
+        )
+        evidence = build_runtime_evidence(benchmark_case, observation)
+        policy_start = perf_counter()
+        decision = policy.decide(
+            system_state,
+            observation,
+            evidence,
+            benchmark_case,
+        )
+        step_telemetry = _build_baseline_step_telemetry(
+            signal=decision.signal,
+            orchestration_latency_ms=(perf_counter() - policy_start) * 1000.0,
+        )
+        counterfactual_scenario_update_result = _default_keep_current_update(
+            regime_label,
+            observation,
+            provenance=f"{mode}_counterfactual_keep_current",
+        )
+        optimization_request = build_optimization_request(
+            system_state=system_state,
+            scenario_update_result=decision.scenario_update_result,
+            base_stock_levels=benchmark_case.base_stock_levels,
+            planning_horizon=1,
+        )
+        counterfactual_request = build_optimization_request(
+            system_state=system_state,
+            scenario_update_result=counterfactual_scenario_update_result,
+            base_stock_levels=benchmark_case.base_stock_levels,
+            planning_horizon=1,
+        )
+        optimization_result = optimizer.solve(optimization_request)
+        counterfactual_result = optimizer.solve(counterfactual_request)
+        zero_order_result = OptimizationResult(
+            replenishment_orders=tuple(0.0 for _ in benchmark_case.stage_names),
+            planning_horizon=1,
+        )
+        next_regime = None
+        if time_index + 1 < experiment_config.resolved_rollout_horizon():
+            next_regime = regime_for_period(evaluation_case.regime_schedule, time_index + 1)
+        transition = advance_serial_state(
+            benchmark_case,
+            current_state=system_state,
+            observation=observation,
+            optimization_result=optimization_result,
+            next_regime=next_regime,
+        )
+        counterfactual_transition = advance_serial_state(
+            benchmark_case,
+            current_state=system_state,
+            observation=observation,
+            optimization_result=counterfactual_result,
+            next_regime=next_regime,
+        )
+        zero_order_transition = advance_serial_state(
+            benchmark_case,
+            current_state=system_state,
+            observation=observation,
+            optimization_result=zero_order_result,
+            next_regime=next_regime,
+        )
+        trace = trace.append_period(
+            PeriodTraceRecord(
+                time_index=time_index,
+                regime_label=regime_label,
+                state=system_state,
+                observation=observation,
+                agent_signal=decision.signal,
+                optimization_result=optimization_result,
+                next_state=transition.next_state,
+                realized_demand=transition.realized_demand,
+                demand_load=transition.demand_load,
+                served_demand=transition.served_demand,
+                unmet_demand=transition.unmet_demand,
+                step_telemetry=step_telemetry,
+                notes=transition.notes,
+            )
+        )
+        period_record = trace.period_records[-1]
+        step_trace_records.append(
+            _build_step_trace_record(
+                episode_id=episode_id,
+                mode=mode,
+                tool_ablation_variant=evaluation_case.tool_ablation_variant,
+                schedule_name=evaluation_case.schedule_name,
+                run_seed=evaluation_case.run_seed,
+                period_record=period_record,
+                optimization_request=optimization_request,
+                counterfactual_request=counterfactual_request,
+                transition=transition,
+                counterfactual_transition=counterfactual_transition,
+                zero_order_transition=zero_order_transition,
+                response=None,
+                scenario_update_result=decision.scenario_update_result,
+                cost_config=benchmark_case.benchmark_config.costs,
+                holding_cost_by_stage=benchmark_case.holding_costs,
+                stockout_cost_by_stage=benchmark_case.stockout_costs,
+                policy_diagnostics=decision.diagnostics,
+            )
+        )
+        system_state = transition.next_state
+    rollout_metrics = compute_rollout_metrics(
+        trace,
+        benchmark_case.benchmark_config.costs,
+        holding_cost_by_stage=benchmark_case.holding_costs,
+        stockout_cost_by_stage=benchmark_case.stockout_costs,
+    )
+    episode_telemetry = summarize_episode_telemetry(trace.step_telemetry)
+    decision_quality = compute_decision_quality(tuple(step_trace_records))
+    summary = _build_summary(
+        mode=mode,
+        run_id=episode_id,
+        benchmark_case=benchmark_case,
+        trace=trace,
+        rollout_metrics=rollout_metrics,
+        episode_telemetry=episode_telemetry,
+        decision_quality=decision_quality,
+        optimizer_order_boundary_preserved=True,
+    )
+    episode_summary_record = build_episode_summary_record(
+        summary,
+        mode=mode,
+        validation_lane=VALIDATION_LANE,
+        tool_ablation_variant=evaluation_case.tool_ablation_variant,
+        schedule_name=evaluation_case.schedule_name,
+        run_seed=evaluation_case.run_seed,
+        regime_schedule=tuple(label.value for label in evaluation_case.regime_schedule),
+        cost_breakdown=_cost_breakdown_record(rollout_metrics),
+        intervention_count=_intervention_count(tuple(step_trace_records)),
+        invalid_output_count=0,
+        fallback_count=0,
+        unavailable_tool_request_count=0,
+        disabled_tool_fallback_count=0,
+        sequencing_blocked_tool_request_count=0,
+        clean_intervention_count=_count_clean_interventions(tuple(step_trace_records)),
+        clean_optimizer_input_change_count=_count_clean_optimizer_input_changes(
+            tuple(step_trace_records)
+        ),
+        repeated_stress_moderation_count=_count_repeated_stress_moderations(
+            tuple(step_trace_records)
+        ),
+        relapse_moderation_count=_count_relapse_moderations(
+            tuple(step_trace_records)
+        ),
+        unresolved_stress_moderation_count=_count_unresolved_stress_moderations(
+            tuple(step_trace_records)
+        ),
+        moderated_update_count=_count_moderated_updates(tuple(step_trace_records)),
+        hysteresis_application_count=_count_hysteresis_applications(
+            tuple(step_trace_records)
+        ),
+        rollout_fidelity_gate_passed=_rollout_fidelity_gate_passed(trace, benchmark_case),
+        operational_metrics_gate_passed=_operational_metrics_gate_passed(
+            summary,
+            rollout_metrics,
+            tuple(step_trace_records),
+        ),
+    )
+    return StockpylSerialRun(
+        mode=mode,
+        run_index=evaluation_case.case_index,
+        schedule_name=evaluation_case.schedule_name,
+        run_seed=evaluation_case.run_seed,
+        tool_ablation_variant=evaluation_case.tool_ablation_variant,
+        benchmark_case=benchmark_case,
+        trace=trace,
+        rollout_metrics=rollout_metrics,
+        summary=summary,
+        regime_schedule=evaluation_case.regime_schedule,
+        episode_summary_record=episode_summary_record,
+        step_trace_records=tuple(step_trace_records),
+    )
+
+
 def _run_named_mode(
     experiment_config: ExperimentConfig,
     agent_config: AgentConfig,
@@ -2289,29 +2467,29 @@ def _run_named_mode(
             benchmark_case,
             evaluation_case=evaluation_case,
         )
-    if normalized_mode == "deterministic_orchestrator":
+    if is_uncertainty_policy_mode(normalized_mode):
+        uncertainty_config = experiment_config.uncertainty_baselines
+        return _run_uncertainty_policy_rollout(
+            experiment_config,
+            benchmark_case,
+            evaluation_case=evaluation_case,
+            mode=normalized_mode,
+            policy=build_uncertainty_policy(
+                normalized_mode,
+                robust_config=uncertainty_config.robust_policy,
+                rolling_config=uncertainty_config.scenario_rolling_horizon_policy,
+            ),
+        )
+    if (
+        normalized_mode
+        == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE
+    ):
         return _run_orchestrated_rollout(
             experiment_config,
             agent_config,
             benchmark_case,
             evaluation_case=evaluation_case,
             mode=mode,
-        )
-    if normalized_mode == "llm_orchestrator":
-        return _run_orchestrated_rollout(
-            experiment_config,
-            agent_config,
-            benchmark_case,
-            evaluation_case=evaluation_case,
-            mode=mode,
-        )
-    if normalized_mode == "orchestration_agent":
-        return _run_orchestrated_rollout(
-            experiment_config,
-            agent_config,
-            benchmark_case,
-            evaluation_case=evaluation_case,
-            mode="deterministic_orchestrator",
         )
     raise ValueError(f"Unsupported mode: {mode!r}.")
 
@@ -2643,7 +2821,7 @@ def run_stockpyl_serial_mode_sweep(
 def run_stockpyl_serial(
     experiment_config_path: str | Path = DEFAULT_EXPERIMENT_CONFIG,
     *,
-    mode: str = "deterministic_orchestrator",
+    mode: str = REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
     llm_client_mode_override: str | None = None,
     llm_model_name_override: str | None = None,
 ) -> StockpylSerialRun:
@@ -2675,7 +2853,7 @@ def run_stockpyl_serial(
 def run_stockpyl_serial_batch(
     experiment_config_path: str | Path = DEFAULT_EXPERIMENT_CONFIG,
     *,
-    mode: str = "deterministic_orchestrator",
+    mode: str = REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
     llm_client_mode_override: str | None = None,
     llm_model_name_override: str | None = None,
     max_runs: int | None = None,
@@ -2711,121 +2889,10 @@ def run_stockpyl_serial_batch(
     )
 
 
-def run_stockpyl_serial_comparison(
-    experiment_config_path: str | Path = DEFAULT_EXPERIMENT_CONFIG,
-    *,
-    llm_client_mode_override: str | None = None,
-    llm_model_name_override: str | None = None,
-) -> StockpylSerialComparison:
-    """Run one instance of each supported mode on the same benchmark case and schedule."""
-
-    experiment_config, agent_config, benchmark_case = _load_runtime_components(
-        experiment_config_path,
-        llm_client_mode_override=llm_client_mode_override,
-        llm_model_name_override=llm_model_name_override,
-    )
-    evaluation_case = _build_evaluation_cases(
-        experiment_config,
-        default_seed=benchmark_case.benchmark_config.random_seed,
-    )[0]
-    case_experiment_config = _experiment_config_for_case(experiment_config, evaluation_case)
-    case_benchmark = _benchmark_case_for_seed(benchmark_case, run_seed=evaluation_case.run_seed)
-    baseline_run = _run_baseline_rollout(
-        case_experiment_config,
-        case_benchmark,
-        evaluation_case=evaluation_case,
-    )
-    deterministic_orchestrator_run = _run_orchestrated_rollout(
-        case_experiment_config,
-        agent_config,
-        case_benchmark,
-        evaluation_case=evaluation_case,
-        mode="deterministic_orchestrator",
-    )
-    llm_orchestrator_run = _run_orchestrated_rollout(
-        case_experiment_config,
-        agent_config,
-        case_benchmark,
-        evaluation_case=evaluation_case,
-        mode="llm_orchestrator",
-    )
-    optimizer_order_boundary_preserved = (
-        baseline_run.summary.optimizer_order_boundary_preserved
-        and deterministic_orchestrator_run.summary.optimizer_order_boundary_preserved
-        and llm_orchestrator_run.summary.optimizer_order_boundary_preserved
-    )
-    return StockpylSerialComparison(
-        benchmark_case=case_benchmark,
-        schedule_name=evaluation_case.schedule_name,
-        run_seed=evaluation_case.run_seed,
-        regime_schedule=evaluation_case.regime_schedule,
-        deterministic_baseline=baseline_run,
-        deterministic_orchestrator=deterministic_orchestrator_run,
-        llm_orchestrator=llm_orchestrator_run,
-        outcomes_differ=_outcomes_differ(
-            (
-                baseline_run,
-                deterministic_orchestrator_run,
-                llm_orchestrator_run,
-            )
-        ),
-        optimizer_order_boundary_preserved=optimizer_order_boundary_preserved,
-    )
-
-
-def run_stockpyl_serial_comparison_batch(
-    experiment_config_path: str | Path = DEFAULT_EXPERIMENT_CONFIG,
-    *,
-    llm_client_mode_override: str | None = None,
-    llm_model_name_override: str | None = None,
-    max_runs: int | None = None,
-) -> StockpylSerialComparisonBatch:
-    """Run repeated comparisons across deterministic and LLM modes."""
-
-    experiment_config, _, benchmark_case = _load_runtime_components(
-        experiment_config_path,
-        llm_client_mode_override=llm_client_mode_override,
-        llm_model_name_override=llm_model_name_override,
-    )
-    if experiment_config.resolved_mode_set() != LEGACY_COMPARISON_MODES:
-        raise ValueError(
-            "run_stockpyl_serial_comparison_batch only supports the legacy three-mode "
-            "comparison set. Use run_stockpyl_serial_mode_sweep for explicit extended mode sets."
-        )
-    mode_sweep = run_stockpyl_serial_mode_sweep(
-        experiment_config_path,
-        llm_client_mode_override=llm_client_mode_override,
-        llm_model_name_override=llm_model_name_override,
-        max_runs=max_runs,
-    )
-    mode_batch_by_name = {
-        batch.mode: batch for batch in mode_sweep.mode_batches
-    }
-    baseline_batch = mode_batch_by_name["deterministic_baseline"]
-    deterministic_batch = mode_batch_by_name["deterministic_orchestrator"]
-    llm_batch = mode_batch_by_name["llm_orchestrator"]
-    return StockpylSerialComparisonBatch(
-        benchmark_case=benchmark_case,
-        schedule_names=tuple(schedule.name for schedule in experiment_config.resolved_schedule_set()),
-        seed_values=experiment_config.resolved_seed_set(benchmark_case.benchmark_config.random_seed),
-        tool_ablation_variants=experiment_config.resolved_tool_ablation_variants(),
-        deterministic_baseline=baseline_batch,
-        deterministic_orchestrator=deterministic_batch,
-        llm_orchestrator=llm_batch,
-        outcomes_differ=mode_sweep.outcomes_differ,
-        optimizer_order_boundary_preserved=(
-            baseline_batch.aggregate_summary.optimizer_order_boundary_preserved
-            and deterministic_batch.aggregate_summary.optimizer_order_boundary_preserved
-            and llm_batch.aggregate_summary.optimizer_order_boundary_preserved
-        ),
-        aggregate_results=mode_sweep.aggregate_results,
-    )
-
-
 def write_stockpyl_serial_artifacts(
     experiment_config_path: str | Path = DEFAULT_EXPERIMENT_CONFIG,
     *,
-    mode: str = "deterministic_orchestrator",
+    mode: str = "all",
     llm_client_mode_override: str | None = None,
     llm_model_name_override: str | None = None,
     max_runs: int | None = None,
@@ -2839,28 +2906,13 @@ def write_stockpyl_serial_artifacts(
         llm_model_name_override=llm_model_name_override,
     )
     if mode == "all":
-        if experiment_config.resolved_mode_set() == LEGACY_COMPARISON_MODES:
-            comparison_batch = run_stockpyl_serial_comparison_batch(
-                experiment_config_path,
-                llm_client_mode_override=llm_client_mode_override,
-                llm_model_name_override=llm_model_name_override,
-                max_runs=max_runs,
-            )
-            runs = (
-                comparison_batch.deterministic_baseline.runs
-                + comparison_batch.deterministic_orchestrator.runs
-                + comparison_batch.llm_orchestrator.runs
-            )
-        else:
-            mode_sweep = run_stockpyl_serial_mode_sweep(
-                experiment_config_path,
-                llm_client_mode_override=llm_client_mode_override,
-                llm_model_name_override=llm_model_name_override,
-                max_runs=max_runs,
-            )
-            runs = tuple(
-                run for batch in mode_sweep.mode_batches for run in batch.runs
-            )
+        mode_sweep = run_stockpyl_serial_mode_sweep(
+            experiment_config_path,
+            llm_client_mode_override=llm_client_mode_override,
+            llm_model_name_override=llm_model_name_override,
+            max_runs=max_runs,
+        )
+        runs = tuple(run for batch in mode_sweep.mode_batches for run in batch.runs)
     else:
         runs = run_stockpyl_serial_batch(
             experiment_config_path,
@@ -2899,9 +2951,9 @@ def main() -> None:
         choices=(
             "all",
             "deterministic_baseline",
-            "deterministic_orchestrator",
-            "llm_orchestrator",
-            "orchestration_agent",
+            "robust_policy",
+            "scenario_rolling_horizon_policy",
+            REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
         ),
         default="all",
         help="Select one rollout mode or run the full controlled comparison.",
@@ -2933,28 +2985,15 @@ def main() -> None:
         llm_model_name_override=args.llm_model_name,
     )
     if args.mode == "all":
-        if experiment_config.resolved_mode_set() == LEGACY_COMPARISON_MODES:
-            batch_payload = run_stockpyl_serial_comparison_batch(
-                args.config,
-                llm_client_mode_override=llm_client_mode_override,
-                llm_model_name_override=args.llm_model_name,
-                max_runs=args.max_runs,
-            )
-            runs = (
-                batch_payload.deterministic_baseline.runs
-                + batch_payload.deterministic_orchestrator.runs
-                + batch_payload.llm_orchestrator.runs
-            )
-        else:
-            batch_payload = run_stockpyl_serial_mode_sweep(
-                args.config,
-                llm_client_mode_override=llm_client_mode_override,
-                llm_model_name_override=args.llm_model_name,
-                max_runs=args.max_runs,
-            )
-            runs = tuple(
-                run for mode_batch in batch_payload.mode_batches for run in mode_batch.runs
-            )
+        batch_payload = run_stockpyl_serial_mode_sweep(
+            args.config,
+            llm_client_mode_override=llm_client_mode_override,
+            llm_model_name_override=args.llm_model_name,
+            max_runs=args.max_runs,
+        )
+        runs = tuple(
+            run for mode_batch in batch_payload.mode_batches for run in mode_batch.runs
+        )
         metadata, artifacts_dir, written_files = _write_logging_artifacts(
             experiment_config=experiment_config,
             agent_config=agent_config,

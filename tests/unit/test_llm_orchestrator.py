@@ -17,6 +17,26 @@ from meio.contracts import (
 from meio.simulation.evidence import DemandEvidence, LeadTimeEvidence, RuntimeEvidence
 from meio.simulation.state import Observation, SimulationState
 
+CURRENT_TOOL_IDS = (
+    "regime_diagnosis_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+    "counterfactual_regret_guard_tool",
+)
+
+
+def _current_tool_specs() -> tuple[ToolSpec, ...]:
+    return tuple(
+        ToolSpec(
+            tool_id=tool_id,
+            tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
+            supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
+            description=tool_id,
+        )
+        for tool_id in CURRENT_TOOL_IDS
+    )
+
 
 def test_llm_orchestrator_builds_typed_decision_from_fake_client() -> None:
     system_state = SimulationState(
@@ -71,50 +91,31 @@ def test_llm_orchestrator_builds_typed_decision_from_fake_client() -> None:
             mission=MissionSpec(
                 mission_id="serial_mission",
                 objective="Allow bounded LLM orchestration only.",
-                admissible_tool_ids=("forecast_tool", "leadtime_tool", "scenario_tool"),
+                admissible_tool_ids=CURRENT_TOOL_IDS,
             ),
             system_state=system_state,
             observation=observation,
             evidence=evidence,
-            candidate_tool_ids=("forecast_tool", "leadtime_tool", "scenario_tool"),
+            candidate_tool_ids=CURRENT_TOOL_IDS,
         ),
-        (
-            ToolSpec(
-                tool_id="forecast_tool",
-                tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-                supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
-                description="forecast",
-            ),
-            ToolSpec(
-                tool_id="leadtime_tool",
-                tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-                supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
-                description="leadtime",
-            ),
-            ToolSpec(
-                tool_id="scenario_tool",
-                tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-                supported_subgoals=(OperationalSubgoal.UPDATE_UNCERTAINTY,),
-                description="scenario",
-            ),
-        ),
+        _current_tool_specs(),
     )
 
     assert decision.assessment.regime_label is RegimeLabel.DEMAND_REGIME_SHIFT
     assert decision.assessment.request_replan is True
-    assert decision.selected_tool_ids == ("forecast_tool", "leadtime_tool", "scenario_tool")
+    assert decision.selected_tool_ids == CURRENT_TOOL_IDS
 
     attempt = orchestrator.decide_with_diagnostics(
         LLMOrchestrationInput(
             mission=MissionSpec(
                 mission_id="serial_mission",
                 objective="Allow bounded LLM orchestration only.",
-                admissible_tool_ids=("forecast_tool", "leadtime_tool", "scenario_tool"),
+                admissible_tool_ids=CURRENT_TOOL_IDS,
             ),
             system_state=system_state,
             observation=observation,
             evidence=evidence,
-            candidate_tool_ids=("forecast_tool", "leadtime_tool", "scenario_tool"),
+            candidate_tool_ids=CURRENT_TOOL_IDS,
             recent_regime_history=(
                 RegimeLabel.NORMAL,
                 RegimeLabel.DEMAND_REGIME_SHIFT,
@@ -127,26 +128,7 @@ def test_llm_orchestrator_builds_typed_decision_from_fake_client() -> None:
                 ),
             ),
         ),
-        (
-            ToolSpec(
-                tool_id="forecast_tool",
-                tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-                supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
-                description="forecast",
-            ),
-            ToolSpec(
-                tool_id="leadtime_tool",
-                tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-                supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
-                description="leadtime",
-            ),
-            ToolSpec(
-                tool_id="scenario_tool",
-                tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-                supported_subgoals=(OperationalSubgoal.UPDATE_UNCERTAINTY,),
-                description="scenario",
-            ),
-        ),
+        _current_tool_specs(),
     )
 
     assert attempt.diagnostics.llm_call_telemetry is not None
@@ -163,33 +145,14 @@ def test_llm_orchestrator_builds_typed_decision_from_fake_client() -> None:
             mission=MissionSpec(
                 mission_id="serial_mission",
                 objective="Allow bounded LLM orchestration only.",
-                admissible_tool_ids=("forecast_tool", "leadtime_tool", "scenario_tool"),
+                admissible_tool_ids=CURRENT_TOOL_IDS,
             ),
             system_state=system_state,
             observation=observation,
             evidence=evidence,
-            candidate_tool_ids=("forecast_tool", "leadtime_tool", "scenario_tool"),
+            candidate_tool_ids=CURRENT_TOOL_IDS,
         ),
-        (
-            ToolSpec(
-                tool_id="forecast_tool",
-                tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-                supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
-                description="forecast",
-            ),
-            ToolSpec(
-                tool_id="leadtime_tool",
-                tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-                supported_subgoals=(OperationalSubgoal.QUERY_UNCERTAINTY,),
-                description="leadtime",
-            ),
-            ToolSpec(
-                tool_id="scenario_tool",
-                tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
-                supported_subgoals=(OperationalSubgoal.UPDATE_UNCERTAINTY,),
-                description="scenario",
-            ),
-        ),
+        _current_tool_specs(),
     )
     assert request.context.demand_baseline_value is None
     assert request.context.total_inventory_value == 90.0

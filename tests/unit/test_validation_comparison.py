@@ -43,7 +43,7 @@ def test_summarize_validation_stack_reads_internal_and_public_lane_artifacts(
                 "validity_gate_passed": True,
                 "mode_summaries": [
                     {
-                        "mode": "llm_orchestrator",
+                        "mode": "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
                         "performance_summary": {"average_total_cost": 320.0, "average_fill_rate": 1.0},
                         "decision_quality": {"regime_prediction_accuracy": 0.95},
                         "validity_summary": {"invalid_output_count": 0, "fallback_count": 0},
@@ -124,7 +124,7 @@ def test_summarize_validation_stack_reads_completed_public_benchmark_rewards() -
                 "validity_gate_passed": True,
                 "mode_summaries": [
                     {
-                        "mode": "deterministic_orchestrator",
+                        "mode": "scenario_rolling_horizon_policy",
                         "performance_summary": {"average_fill_rate": 0.63},
                         "decision_quality": {},
                         "validity_summary": {"invalid_output_count": 0, "fallback_count": 0},
@@ -139,7 +139,7 @@ def test_summarize_validation_stack_reads_completed_public_benchmark_rewards() -
                 "blocked_reason": None,
                 "mode_summaries": [
                     {
-                        "mode": "deterministic_orchestrator",
+                        "mode": "scenario_rolling_horizon_policy",
                         "total_reward": 31086.72,
                     }
                 ],

@@ -14,6 +14,8 @@ from meio.evaluation.tool_attribution import (
     summarize_tool_usage,
 )
 
+CURRENT_AGENTIC_MODE = "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"
+
 
 def _episode_record(
     *,
@@ -28,7 +30,7 @@ def _episode_record(
 ) -> EpisodeSummaryRecord:
     return EpisodeSummaryRecord(
         episode_id=episode_id,
-        mode="llm_orchestrator",
+        mode=CURRENT_AGENTIC_MODE,
         benchmark_id="serial_3_echelon",
         topology="serial",
         echelon_count=3,
@@ -84,7 +86,7 @@ def _step_record(
 ) -> StepTraceRecord:
     return StepTraceRecord(
         episode_id=f"{tool_ablation_variant}_episode",
-        mode="llm_orchestrator",
+        mode=CURRENT_AGENTIC_MODE,
         tool_ablation_variant=tool_ablation_variant,
         schedule_name="shift_recovery",
         run_seed=20260417,
@@ -120,14 +122,14 @@ def test_summarize_tool_usage_counts_direct_decision_and_optimizer_input_changes
     records = (
         ToolCallTraceRecord(
             episode_id="full_episode",
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             tool_ablation_variant="full",
             schedule_name="shift_recovery",
             run_seed=20260417,
             period_index=1,
             call_index=0,
-            tool_id="forecast_tool",
-            tool_input={"tool_id": "forecast_tool"},
+            tool_id="regime_diagnosis_tool",
+            tool_input={"tool_id": "regime_diagnosis_tool"},
             tool_output={"status": "success"},
             success=True,
             error_type=None,
@@ -149,14 +151,14 @@ def test_summarize_tool_usage_counts_direct_decision_and_optimizer_input_changes
         ),
         ToolCallTraceRecord(
             episode_id="full_episode",
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             tool_ablation_variant="full",
             schedule_name="shift_recovery",
             run_seed=20260417,
             period_index=1,
             call_index=1,
-            tool_id="forecast_tool",
-            tool_input={"tool_id": "forecast_tool"},
+            tool_id="regime_diagnosis_tool",
+            tool_input={"tool_id": "regime_diagnosis_tool"},
             tool_output={"status": "success"},
             success=True,
             error_type=None,
@@ -179,14 +181,14 @@ def test_summarize_tool_usage_counts_direct_decision_and_optimizer_input_changes
     )
 
     summary = summarize_tool_usage(
-        mode="llm_orchestrator",
+        mode=CURRENT_AGENTIC_MODE,
         tool_ablation_variant="full",
         tool_call_records=records,
     )
 
     assert len(summary.tool_records) == 1
     record = summary.tool_records[0]
-    assert record.tool_id == "forecast_tool"
+    assert record.tool_id == "regime_diagnosis_tool"
     assert record.call_count == 2
     assert record.changed_regime_label_count == 1
     assert record.changed_update_request_count == 1
@@ -210,8 +212,8 @@ def test_summarize_tool_ablation_compares_against_full_reference() -> None:
     )
     ablated_episodes = (
         _episode_record(
-            episode_id="no_forecast_episode",
-            tool_ablation_variant="no_forecast_tool",
+            episode_id="diagnostic_variant_episode",
+            tool_ablation_variant="diagnostic_variant",
             total_cost=320.0,
             fill_rate=0.95,
             no_action_count=3,
@@ -233,7 +235,13 @@ def test_summarize_tool_ablation_compares_against_full_reference() -> None:
         _step_record(
             period_index=1,
             tool_ablation_variant="full",
-            selected_tools=("forecast_tool", "leadtime_tool", "scenario_tool"),
+            selected_tools=(
+                "regime_diagnosis_tool",
+                "regime_belief_tool",
+                "scenario_candidate_generator_tool",
+                "risk_sensitive_scenario_evaluator_tool",
+                "counterfactual_regret_guard_tool",
+            ),
             request_replan=True,
             demand_outlook=15.0,
             optimizer_orders=(24.0, 22.0, 18.0),
@@ -243,7 +251,7 @@ def test_summarize_tool_ablation_compares_against_full_reference() -> None:
     ablated_steps = (
         _step_record(
             period_index=0,
-            tool_ablation_variant="no_forecast_tool",
+            tool_ablation_variant="diagnostic_variant",
             selected_tools=(),
             request_replan=False,
             demand_outlook=10.0,
@@ -252,8 +260,8 @@ def test_summarize_tool_ablation_compares_against_full_reference() -> None:
         ),
         _step_record(
             period_index=1,
-            tool_ablation_variant="no_forecast_tool",
-            selected_tools=("leadtime_tool", "scenario_tool"),
+            tool_ablation_variant="diagnostic_variant",
+            selected_tools=("regime_belief_tool", "scenario_candidate_generator_tool"),
             request_replan=False,
             demand_outlook=10.0,
             optimizer_orders=(18.0, 16.0, 12.0),
@@ -262,16 +270,16 @@ def test_summarize_tool_ablation_compares_against_full_reference() -> None:
     )
 
     summary = summarize_tool_ablation(
-        mode="llm_orchestrator",
-        tool_ablation_variant="no_forecast_tool",
+        mode=CURRENT_AGENTIC_MODE,
+        tool_ablation_variant="diagnostic_variant",
         full_episode_records=full_episodes,
         ablated_episode_records=ablated_episodes,
         full_step_records=full_steps,
         ablated_step_records=ablated_steps,
     )
 
-    assert REMOVED_TOOL_BY_ABLATION["no_forecast_tool"] == "forecast_tool"
-    assert summary.removed_tool_id == "forecast_tool"
+    assert REMOVED_TOOL_BY_ABLATION == {"full": None}
+    assert summary.removed_tool_id is None
     assert summary.run_count == 1
     assert summary.no_action_rate_delta_vs_full > 0.0
     assert summary.replan_rate_delta_vs_full < 0.0

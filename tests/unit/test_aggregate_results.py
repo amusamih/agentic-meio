@@ -11,6 +11,8 @@ from meio.evaluation.logging_schema import (
     ToolCallTraceRecord,
 )
 
+CURRENT_AGENTIC_MODE = "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"
+
 
 def _episode_record(
     *,
@@ -106,7 +108,7 @@ def test_aggregate_mode_episode_summaries_computes_schedule_and_seed_aware_means
     records = (
         _episode_record(
             episode_id="run_0",
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             schedule_name="shift_recovery",
             run_seed=20260417,
             total_cost=300.0,
@@ -120,7 +122,7 @@ def test_aggregate_mode_episode_summaries_computes_schedule_and_seed_aware_means
         ),
         _episode_record(
             episode_id="run_1",
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             schedule_name="sustained_shift",
             run_seed=20260418,
             total_cost=360.0,
@@ -145,7 +147,7 @@ def test_aggregate_mode_episode_summaries_computes_schedule_and_seed_aware_means
         ),
     )
 
-    summary = aggregate_mode_episode_summaries("llm_orchestrator", records)
+    summary = aggregate_mode_episode_summaries(CURRENT_AGENTIC_MODE, records)
 
     assert summary.run_count == 2
     assert summary.schedule_names == ("shift_recovery", "sustained_shift")
@@ -192,7 +194,7 @@ def test_aggregate_batch_episode_summaries_groups_records_by_mode() -> None:
     )
     llm_record = _episode_record(
         episode_id="llm_0",
-        mode="llm_orchestrator",
+        mode=CURRENT_AGENTIC_MODE,
         schedule_name="shift_recovery",
         run_seed=20260417,
         total_cost=330.0,
@@ -209,12 +211,12 @@ def test_aggregate_batch_episode_summaries_groups_records_by_mode() -> None:
         benchmark_id="serial_3_echelon",
         records_by_mode={
             "deterministic_baseline": (baseline_record,),
-            "llm_orchestrator": (llm_record,),
+            CURRENT_AGENTIC_MODE: (llm_record,),
         },
     )
 
     assert batch_summary.benchmark_id == "serial_3_echelon"
-    assert batch_summary.mode_names == ("deterministic_baseline", "llm_orchestrator")
+    assert batch_summary.mode_names == ("deterministic_baseline", CURRENT_AGENTIC_MODE)
     assert batch_summary.schedule_names == ("shift_recovery",)
     assert batch_summary.seed_values == (20260417,)
     assert batch_summary.tool_ablation_variants == ("full",)
@@ -227,7 +229,7 @@ def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_
     records = (
         _episode_record(
             episode_id="full_episode",
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             schedule_name="shift_recovery",
             run_seed=20260417,
             total_cost=300.0,
@@ -241,8 +243,8 @@ def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_
             tool_ablation_variant="full",
         ),
         _episode_record(
-            episode_id="no_forecast_episode",
-            mode="llm_orchestrator",
+            episode_id="diagnostic_variant_episode",
+            mode=CURRENT_AGENTIC_MODE,
             schedule_name="shift_recovery",
             run_seed=20260417,
             total_cost=320.0,
@@ -253,7 +255,7 @@ def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_
             tool_call_count=2,
             total_tokens=4300,
             total_llm_latency_ms=7900.0,
-            tool_ablation_variant="no_forecast_tool",
+            tool_ablation_variant="diagnostic_variant",
             unavailable_tool_request_count=1,
             disabled_tool_fallback_count=1,
             sequencing_blocked_tool_request_count=2,
@@ -262,7 +264,7 @@ def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_
     step_trace_records = (
         StepTraceRecord(
             episode_id="full_episode",
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             tool_ablation_variant="full",
             schedule_name="shift_recovery",
             run_seed=20260417,
@@ -271,7 +273,13 @@ def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_
             predicted_regime_label="demand_regime_shift",
             confidence=0.9,
             selected_subgoal="query_uncertainty",
-            selected_tools=("forecast_tool", "leadtime_tool", "scenario_tool"),
+            selected_tools=(
+                "regime_diagnosis_tool",
+                "regime_belief_tool",
+                "scenario_candidate_generator_tool",
+                "risk_sensitive_scenario_evaluator_tool",
+                "counterfactual_regret_guard_tool",
+            ),
             update_requests=("switch_demand_regime",),
             request_replan=True,
             abstain_or_no_action=False,
@@ -293,9 +301,9 @@ def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_
             intervention_changed_outcome=True,
         ),
         StepTraceRecord(
-            episode_id="no_forecast_episode",
-            mode="llm_orchestrator",
-            tool_ablation_variant="no_forecast_tool",
+            episode_id="diagnostic_variant_episode",
+            mode=CURRENT_AGENTIC_MODE,
+            tool_ablation_variant="diagnostic_variant",
             schedule_name="shift_recovery",
             run_seed=20260417,
             period_index=1,
@@ -303,7 +311,7 @@ def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_
             predicted_regime_label="demand_regime_shift",
             confidence=0.9,
             selected_subgoal="no_action",
-            selected_tools=("leadtime_tool", "scenario_tool"),
+            selected_tools=("regime_belief_tool", "scenario_candidate_generator_tool"),
             update_requests=("keep_current",),
             request_replan=False,
             abstain_or_no_action=True,
@@ -328,14 +336,14 @@ def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_
     tool_call_records = (
         ToolCallTraceRecord(
             episode_id="full_episode",
-            mode="llm_orchestrator",
+            mode=CURRENT_AGENTIC_MODE,
             tool_ablation_variant="full",
             schedule_name="shift_recovery",
             run_seed=20260417,
             period_index=1,
             call_index=0,
-            tool_id="forecast_tool",
-            tool_input={"tool_id": "forecast_tool"},
+            tool_id="regime_diagnosis_tool",
+            tool_input={"tool_id": "regime_diagnosis_tool"},
             tool_output={"status": "success"},
             success=True,
             error_type=None,
@@ -366,26 +374,26 @@ def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_
     )
 
     summary = aggregate_mode_episode_summaries(
-        "llm_orchestrator",
+        CURRENT_AGENTIC_MODE,
         records,
         step_trace_records=step_trace_records,
         tool_call_records=tool_call_records,
     )
 
-    assert summary.tool_ablation_variants == ("full", "no_forecast_tool")
+    assert summary.tool_ablation_variants == ("diagnostic_variant", "full")
     assert len(summary.tool_attribution) == 2
     assert len(summary.ablation_breakdown) == 2
-    no_forecast_summary = next(
+    diagnostic_variant_summary = next(
         item
         for item in summary.ablation_breakdown
-        if item.tool_ablation_variant == "no_forecast_tool"
+        if item.tool_ablation_variant == "diagnostic_variant"
     )
-    assert no_forecast_summary.tool_ablation_summary is not None
-    assert no_forecast_summary.tool_ablation_summary.removed_tool_id == "forecast_tool"
-    assert no_forecast_summary.tool_ablation_summary.decision_change_count == 1
-    assert no_forecast_summary.tool_ablation_summary.unavailable_tool_request_count == 1
-    assert no_forecast_summary.tool_ablation_summary.disabled_tool_fallback_count == 1
+    assert diagnostic_variant_summary.tool_ablation_summary is not None
+    assert diagnostic_variant_summary.tool_ablation_summary.removed_tool_id is None
+    assert diagnostic_variant_summary.tool_ablation_summary.decision_change_count == 1
+    assert diagnostic_variant_summary.tool_ablation_summary.unavailable_tool_request_count == 1
+    assert diagnostic_variant_summary.tool_ablation_summary.disabled_tool_fallback_count == 1
     assert (
-        no_forecast_summary.tool_ablation_summary.sequencing_blocked_tool_request_count
+        diagnostic_variant_summary.tool_ablation_summary.sequencing_blocked_tool_request_count
         == 2
     )
