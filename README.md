@@ -6,13 +6,13 @@ reasoning above a trusted downstream replenishment rule: the Agentic AI layer
 may diagnose regimes, use bounded tools, and propose scenario inputs, but it
 does not emit raw replenishment orders.
 
-The current public implementation centers on a regret-guarded, risk-sensitive
-Agentic AI system evaluated against deterministic, robust, and rolling-horizon
+The implementation centers on a regret-guarded, risk-sensitive Agentic AI
+system evaluated against deterministic, robust, and rolling-horizon
 uncertainty-handling baselines.
 
-## Current Agentic AI System
+## Agentic AI System
 
-The active Agentic AI path uses five explicit tools:
+The Agentic AI path uses five explicit tools:
 
 - `regime_diagnosis_tool`
 - `regime_belief_tool`
@@ -22,8 +22,8 @@ The active Agentic AI path uses five explicit tools:
 
 The tools support a bounded decision flow:
 
-1. Diagnose the current operating regime from demand, lead-time, inventory,
-   backlog, and pipeline evidence.
+1. Diagnose the operating regime from demand, lead-time, inventory, backlog,
+   and pipeline evidence.
 2. Form a small belief over plausible hidden regimes.
 3. Generate bounded scenario-update candidates.
 4. Evaluate candidates through a risk-sensitive scenario-scoring step.
@@ -35,7 +35,7 @@ preserving the downstream action boundary.
 
 ## Compared Modes
 
-The retained comparison surface uses four modes:
+The comparison surface uses four modes:
 
 - `deterministic_baseline`
 - `robust_policy`
@@ -48,7 +48,7 @@ replenishment rule.
 
 ## Validation Lanes
 
-The repository supports three retained validation lanes:
+The repository supports three validation lanes:
 
 - Controlled internal simulation:
   `configs/experiment/stockpyl_serial_realistic_comparison.toml`
@@ -92,7 +92,7 @@ python -m pip install pytest stockpyl openai numpy pandas pyyaml
 For live LLM runs, set `OPENAI_API_KEY`. A minimal environment template is
 provided in `.env.example`.
 
-The current live agent configuration uses `gpt-5.4-mini` unless overridden by
+The live agent configuration uses `gpt-5.4-mini` unless overridden by
 environment variables.
 
 ## Running The Main Lanes
@@ -121,7 +121,7 @@ Run the externally grounded backtesting panel:
 python scripts/run_real_demand_backtest.py --config configs/experiment/real_demand_backtest_panel_realistic_comparison.toml --mode all --llm-client-mode real
 ```
 
-Summarize the retained validation stack from saved local artifacts:
+Summarize the validation stack from saved local artifacts:
 
 ```powershell
 python scripts/analyze_validation_stack.py
