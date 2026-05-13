@@ -1,55 +1,85 @@
 # MEIO
 
-MEIO studies bounded agentic uncertainty management for stochastic multi-echelon inventory control. The central idea is to place a bounded orchestration layer above a trusted optimizer: the orchestrator decides when uncertainty assumptions should be revisited and which bounded tools to use, while the optimizer remains the only component allowed to emit raw replenishment orders.
+MEIO studies bounded agentic uncertainty management for stochastic
+multi-echelon inventory control. The core design keeps adaptive uncertainty
+reasoning above a trusted downstream replenishment rule: the Agentic AI layer
+may diagnose regimes, use bounded tools, and propose scenario inputs, but it
+does not emit raw replenishment orders.
 
-The repository is organized as a research codebase rather than a product demo. The frozen method under study uses three bounded tools:
+The current public implementation centers on a regret-guarded, risk-sensitive
+Agentic AI system evaluated against deterministic, robust, and rolling-horizon
+uncertainty-handling baselines.
 
-- `forecast_tool`
-- `leadtime_tool`
-- `scenario_tool`
+## Current Agentic AI System
 
-Current evidence supports conditional usefulness rather than universal superiority: the bounded LLM-backed orchestration mode helps in some settings, stays validity-clean under the saved evaluation stack, and preserves optimizer-only action authority, but it is not a blanket win over simpler modes on every benchmark slice.
+The active Agentic AI path uses five explicit tools:
 
-## Method Summary
+- `regime_diagnosis_tool`
+- `regime_belief_tool`
+- `scenario_candidate_generator_tool`
+- `risk_sensitive_scenario_evaluator_tool`
+- `counterfactual_regret_guard_tool`
 
-The method keeps a strict separation between uncertainty management and action optimization.
+The tools support a bounded decision flow:
 
-- The bounded orchestrator manages uncertainty-facing subgoals such as inspecting evidence, selecting tools, requesting bounded updates, requesting replanning, or abstaining.
-- The trusted optimizer consumes the resulting bounded uncertainty state and computes replenishment quantities.
-- Structured-output validation, tool admissibility checks, fallback handling, and run-level trace logging remain active across the supported lanes.
+1. Diagnose the current operating regime from demand, lead-time, inventory,
+   backlog, and pipeline evidence.
+2. Form a small belief over plausible hidden regimes.
+3. Generate bounded scenario-update candidates.
+4. Evaluate candidates through a risk-sensitive scenario-scoring step.
+5. Apply a counterfactual regret guard before the selected scenario inputs are
+   handed to the trusted downstream replenishment rule.
 
-## Validation Stack
+This keeps the method agentic at the uncertainty-management layer while
+preserving the downstream action boundary.
 
-The repository currently supports three main validation lanes.
+## Compared Modes
 
-- `stockpyl_internal`
-  - main evidence base
-  - structured serial multi-echelon validation on the Stockpyl path
-- `public_benchmark`
-  - supporting external validation
-  - end-to-end execution on a pinned local ReplenishmentEnv checkout through a thin single-store adapter
-- `real_demand_backtest`
-  - supporting external validation
-  - bounded rolling backtests on public demand and lead-time observations
+The retained comparison surface uses four modes:
 
-These lanes are not all directly comparable. In particular, public-benchmark reward is not the same objective as Stockpyl total cost, and the real-demand lane reuses the Stockpyl cost backbone while replacing the observations with externally grounded demand and lead-time data.
+- `deterministic_baseline`
+- `robust_policy`
+- `scenario_rolling_horizon_policy`
+- `llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator`
 
-The tracked codebase also retains additional experimental engineering utilities, including a semi-synthetic external-evidence branch and related analysis helpers. Those components are kept for completeness and reproducibility of the implementation surface, but they are not part of the main public validation claim summarized in this README.
+The non-Agentic baselines do not call the LLM or the Agentic AI orchestration
+logic. They only supply scenario inputs to the same protected downstream
+replenishment rule.
+
+## Validation Lanes
+
+The repository supports three retained validation lanes:
+
+- Controlled internal simulation:
+  `configs/experiment/stockpyl_serial_realistic_comparison.toml`
+- Public benchmark portability:
+  `configs/experiment/public_benchmark_realistic_comparison.toml`
+- Externally grounded backtesting:
+  `configs/experiment/real_demand_backtest_panel_realistic_comparison.toml`
+
+The lanes are interpreted side by side rather than pooled. The public benchmark
+reports native benchmark reward, while the internal and externally grounded
+lanes report Stockpyl-based cost metrics.
 
 ## Repository Layout
 
-- `src/meio/`: core packages for agents, tools, simulation, optimization, evaluation, benchmark adapters, and backtesting
+- `src/meio/`: core packages for agents, scenario planning, baselines,
+  simulation, evaluation, benchmark adapters, and backtesting
 - `configs/`: benchmark, agent, and experiment configurations
-- `scripts/`: entry points for validated runs and result analysis
-- `tests/`: unit tests for contracts, runtimes, adapters, evaluation, and export logic
-- `third_party/ReplenishmentEnv/`: pinned local benchmark dependency for the public-benchmark lane
-- `results/`: local artifact output directory; only a placeholder is tracked in Git
+- `scripts/`: entry points for validated runs and summaries
+- `tests/`: unit tests for contracts, runtimes, adapters, evaluation, and
+  reporting logic
+- `third_party/ReplenishmentEnv/`: pinned local benchmark dependency used by
+  the public-benchmark and externally grounded lanes
+- `audit-trace logs/`: curated public audit-trace example and README
 
-Generated experiment artifacts are written to `results/` during local runs.
+Generated experiment artifacts are written locally under `results/`. The
+`results/` directory is intentionally ignored and is not tracked in Git.
 
 ## Setup
 
-Create an isolated Python 3.11+ environment, install the package in editable mode, and install the runtime dependencies used by the validated lanes.
+Create an isolated Python environment, install the package in editable mode,
+and install the runtime dependencies used by the validated lanes.
 
 ```powershell
 python -m venv .venv
@@ -59,51 +89,52 @@ python -m pip install -e .
 python -m pip install pytest stockpyl openai numpy pandas pyyaml
 ```
 
-For live LLM runs, set `OPENAI_API_KEY`. A minimal environment template is provided in `.env.example`.
+For live LLM runs, set `OPENAI_API_KEY`. A minimal environment template is
+provided in `.env.example`.
 
-For the public-benchmark lane, keep `third_party/ReplenishmentEnv/` in place. The current benchmark integration depends on that pinned local checkout rather than an upstream wheel.
+The current live agent configuration uses `gpt-5.4-mini` unless overridden by
+environment variables.
 
-## Running The Main Validated Lanes
+## Running The Main Lanes
 
-Set `PYTHONPATH` so the scripts can resolve the local package.
+Set `PYTHONPATH` so scripts can resolve the local package.
 
 ```powershell
 $env:PYTHONPATH = "src"
 ```
 
-Run the main internal structured screen:
+Run the controlled internal comparison:
 
 ```powershell
-python scripts/run_stockpyl_serial.py --config configs/experiment/stockpyl_serial_paper_candidate.toml --mode all --llm-client-mode real
+python scripts/run_stockpyl_serial.py --config configs/experiment/stockpyl_serial_realistic_comparison.toml --mode all --llm-client-mode real
 ```
 
-Run the frozen public-benchmark lane:
+Run the public benchmark portability comparison:
 
 ```powershell
-python scripts/run_public_benchmark_eval.py --config configs/experiment/public_benchmark_eval.toml --mode all --llm-client-mode real
+python scripts/run_public_benchmark_eval.py --config configs/experiment/public_benchmark_realistic_comparison.toml --mode all --llm-client-mode real
 ```
 
-Run the frozen repeated real-demand panel:
+Run the externally grounded backtesting panel:
 
 ```powershell
-python scripts/run_real_demand_backtest.py --config configs/experiment/real_demand_backtest_panel.toml --mode all --llm-client-mode real
+python scripts/run_real_demand_backtest.py --config configs/experiment/real_demand_backtest_panel_realistic_comparison.toml --mode all --llm-client-mode real
 ```
 
-Summarize the current validation stack from saved artifacts:
+Summarize the retained validation stack from saved local artifacts:
 
 ```powershell
 python scripts/analyze_validation_stack.py
 ```
 
-## What To Expect From The Saved Evidence
-
-- The Stockpyl lane is the main evidence base.
-- The public benchmark and real-demand lanes are supporting external validation.
-- The strongest current interpretation is conditional usefulness of the bounded LLM layer under a strict optimizer boundary, not universal outperformance across all settings.
-
 ## Reproducibility Notes
 
-- Configs are explicit and versioned under `configs/`.
-- Saved run directories include manifests, metadata, aggregate summaries, and trace files for audit when experiments are run locally.
-- Frozen result artifacts are not committed to this public repository by default; `results/` is kept as a local output location.
-- The public benchmark lane uses a pinned local third-party dependency to avoid the broken upstream packaging path encountered during validation.
+- Experiment configs are explicit and versioned under `configs/`.
+- Local run directories include manifests, metadata, aggregate summaries, and
+  audit traces when experiments are executed.
+- Result artifacts are not committed to the public repository by default.
+- The public benchmark lane uses a pinned local ReplenishmentEnv checkout to
+  avoid relying on unstable upstream packaging behavior.
+- The curated audit trace omits full prompt text, raw model text, and hidden
+  model reasoning while retaining the structured fields needed to audit the
+  governed handoff.

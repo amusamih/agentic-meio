@@ -11,6 +11,7 @@ AGENTS.md
 *.docx
 *.tex
 *.bib
+*.zip
 .venv/
 .env
 .env.*
@@ -23,8 +24,7 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .DS_Store
-results/*
-!results/.gitkeep
+results/
 .pytest_cache/
 pytest-cache-files-*/
 .mypy_cache/
