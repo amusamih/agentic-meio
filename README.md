@@ -75,7 +75,7 @@ lanes report Stockpyl-based cost metrics.
   reporting logic
 - `third_party/ReplenishmentEnv/`: pinned local benchmark dependency used by
   the public-benchmark and externally grounded lanes
-- `audit-trace logs/`: curated public audit-trace example and README
+- `audit-trace-logs/`: curated public audit-trace example and README
 
 Generated experiment artifacts are written locally under `results/`. The
 `results/` directory is intentionally ignored and is not tracked in Git.
