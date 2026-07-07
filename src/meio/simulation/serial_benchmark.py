@@ -1,4 +1,4 @@
-"""Boundary skeleton for the first canonical serial benchmark milestone."""
+"""Serial benchmark boundary for the controlled MEIO validation lanes."""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ class SerialBenchmarkCase:
     holding_costs: tuple[float, ...]
     stockout_costs: tuple[float, ...]
     stockpyl_instance: StockpylSerialInstance
-    milestone_notes: str
+    implementation_notes: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,14 +137,14 @@ class SerialPeriodTransition:
 
 
 def validate_serial_benchmark_config(config: BenchmarkConfig) -> BenchmarkConfig:
-    """Validate the boundary assumptions for the first serial benchmark."""
+    """Validate the boundary assumptions for the serial benchmark."""
 
     if config.benchmark_family is not BenchmarkFamily.SERIAL:
-        raise ValueError("The first benchmark boundary only supports the serial family.")
+        raise ValueError("The benchmark boundary only supports the serial family.")
     if config.topology != "serial":
-        raise ValueError("The first benchmark boundary only supports serial topology.")
+        raise ValueError("The benchmark boundary only supports serial topology.")
     if config.service_model is not BackorderPolicy.BACKORDERS:
-        raise ValueError("The first benchmark boundary only supports backorders.")
+        raise ValueError("The benchmark boundary only supports backorders.")
     if config.echelon_count not in FUTURE_READY_SERIAL_ECHELON_COUNTS:
         raise ValueError("The serial benchmark boundary currently supports 3 or 5 echelons.")
     return config
@@ -172,7 +172,7 @@ def build_serial_benchmark_case(
         holding_costs=stockpyl_instance.holding_costs,
         stockout_costs=stockpyl_instance.stockout_costs,
         stockpyl_instance=stockpyl_instance,
-        milestone_notes=(
+        implementation_notes=(
             "Stockpyl-backed serial benchmark boundary with explicit in-transit queues, "
             "internal order backlogs, and stage-weighted operating costs."
         ),
@@ -301,7 +301,7 @@ def build_runtime_evidence(
         scenario_families=case.stockpyl_instance.scenario_families,
         demand_baseline_value=float(case.stockpyl_instance.demand_mean),
         leadtime_baseline_value=float(case.stockpyl_instance.primary_inbound_lead_time),
-        notes=(case.milestone_notes, case.adapter_name),
+        notes=(case.implementation_notes, case.adapter_name),
     )
 
 

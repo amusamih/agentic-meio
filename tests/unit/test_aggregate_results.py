@@ -275,6 +275,7 @@ def test_aggregate_mode_episode_summaries_include_tool_attribution_and_ablation_
             selected_subgoal="query_uncertainty",
             selected_tools=(
                 "regime_diagnosis_tool",
+                "demand_uncertainty_decomposition_tool",
                 "regime_belief_tool",
                 "scenario_candidate_generator_tool",
                 "risk_sensitive_scenario_evaluator_tool",

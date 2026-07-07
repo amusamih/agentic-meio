@@ -198,6 +198,16 @@ def test_summarize_tool_usage_counts_direct_decision_and_optimizer_input_changes
 
 
 def test_summarize_tool_ablation_compares_against_full_reference() -> None:
+    assert REMOVED_TOOL_BY_ABLATION["without_demand_decomposition"] == (
+        "demand_uncertainty_decomposition_tool"
+    )
+    assert REMOVED_TOOL_BY_ABLATION["without_risk_sensitive_evaluation"] == (
+        "risk_sensitive_scenario_evaluator_tool"
+    )
+    assert REMOVED_TOOL_BY_ABLATION["without_regret_guard"] == (
+        "counterfactual_regret_guard_tool"
+    )
+
     full_episodes = (
         _episode_record(
             episode_id="full_episode",
@@ -237,6 +247,7 @@ def test_summarize_tool_ablation_compares_against_full_reference() -> None:
             tool_ablation_variant="full",
             selected_tools=(
                 "regime_diagnosis_tool",
+                "demand_uncertainty_decomposition_tool",
                 "regime_belief_tool",
                 "scenario_candidate_generator_tool",
                 "risk_sensitive_scenario_evaluator_tool",
@@ -278,7 +289,7 @@ def test_summarize_tool_ablation_compares_against_full_reference() -> None:
         ablated_step_records=ablated_steps,
     )
 
-    assert REMOVED_TOOL_BY_ABLATION == {"full": None}
+    assert REMOVED_TOOL_BY_ABLATION["full"] is None
     assert summary.removed_tool_id is None
     assert summary.run_count == 1
     assert summary.no_action_rate_delta_vs_full > 0.0

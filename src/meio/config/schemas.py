@@ -1,4 +1,4 @@
-"""Typed configuration schemas for the first MEIO milestone."""
+"""Typed configuration schemas for MEIO experiments and validation lanes."""
 
 from __future__ import annotations
 
@@ -27,12 +27,18 @@ DEFAULT_RUNTIME_MODE_SET = (
 )
 ALLOWED_TOOL_ABLATION_VARIANTS = (
     "full",
+    "without_demand_decomposition",
+    "without_risk_sensitive_evaluation",
+    "without_regret_guard",
 )
 ALLOWED_VALIDATION_LANES = (
     "stockpyl_internal",
     "public_benchmark",
     "real_demand_backtest",
     "official_event_replay",
+)
+ALLOWED_CONTROLLED_DEMAND_PROFILE_TYPES = (
+    "mean_preserving_spread",
 )
 
 
@@ -96,7 +102,7 @@ class SerialSystemConfig:
     def __post_init__(self) -> None:
         _validate_positive_int(self.echelon_count, "echelon_count")
         if self.topology != "serial":
-            raise ValueError("Only serial topology is supported in this milestone.")
+            raise ValueError("Only serial topology is supported by this implementation.")
         object.__setattr__(self, "stages", tuple(self.stages))
         if self.stages and len(self.stages) != self.echelon_count:
             raise ValueError("stages must match echelon_count when provided.")
@@ -123,7 +129,7 @@ class CostConfig:
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkConfig:
-    """Benchmark configuration for the first serial milestone."""
+    """Benchmark configuration for the serial MEIO setting."""
 
     benchmark_family: BenchmarkFamily
     system: SerialSystemConfig
@@ -177,6 +183,71 @@ class RegimeScheduleConfig:
         """Return the fixed horizon implied by the schedule."""
 
         return len(self.labels)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledDemandStateConfig:
+    """Demand values used to represent one controlled demand-uncertainty state."""
+
+    regime_label: RegimeLabel
+    values: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.regime_label, RegimeLabel):
+            raise TypeError("regime_label must be a RegimeLabel.")
+        object.__setattr__(self, "values", tuple(float(value) for value in self.values))
+        if not self.values:
+            raise ValueError("controlled demand state values must not be empty.")
+        for value in self.values:
+            _validate_non_negative_number(value, "controlled demand state values")
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledDemandProfileConfig:
+    """Optional controlled demand profile for fixed-mean spread experiments."""
+
+    profile_type: str
+    target_mean: float
+    history_window: int = 3
+    states: tuple[ControlledDemandStateConfig, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        _validate_choice(
+            self.profile_type,
+            "controlled_demand_profile.profile_type",
+            ALLOWED_CONTROLLED_DEMAND_PROFILE_TYPES,
+        )
+        if self.target_mean <= 0.0:
+            raise ValueError("controlled_demand_profile.target_mean must be positive.")
+        _validate_positive_int(
+            self.history_window,
+            "controlled_demand_profile.history_window",
+        )
+        object.__setattr__(self, "states", tuple(self.states))
+        if not self.states:
+            raise ValueError("controlled_demand_profile.states must not be empty.")
+        for state in self.states:
+            if not isinstance(state, ControlledDemandStateConfig):
+                raise TypeError(
+                    "controlled_demand_profile.states must contain "
+                    "ControlledDemandStateConfig values."
+                )
+            state_mean = sum(state.values) / len(state.values)
+            if abs(state_mean - self.target_mean) > 1e-9:
+                raise ValueError(
+                    "controlled demand state values must average to target_mean."
+                )
+        labels = tuple(state.regime_label for state in self.states)
+        if len(labels) != len(set(labels)):
+            raise ValueError("controlled_demand_profile.states must use unique labels.")
+
+    def values_for(self, regime_label: RegimeLabel) -> tuple[float, ...]:
+        """Return the configured demand values for a scheduled regime label."""
+
+        for state in self.states:
+            if state.regime_label is regime_label:
+                return state.values
+        raise KeyError(f"No controlled demand state configured for {regime_label.value!r}.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +349,7 @@ class ExperimentConfig:
     seed_set: tuple[int, ...] = field(default_factory=tuple)
     mode_set: tuple[str, ...] = field(default_factory=lambda: DEFAULT_RUNTIME_MODE_SET)
     tool_ablation_variants: tuple[str, ...] = field(default_factory=lambda: ("full",))
+    controlled_demand_profile: ControlledDemandProfileConfig | None = None
     uncertainty_baselines: UncertaintyBaselineConfig = field(
         default_factory=UncertaintyBaselineConfig
     )
@@ -309,6 +381,30 @@ class ExperimentConfig:
         if len(schedule_names) != len(set(schedule_names)):
             raise ValueError("regime_schedules must use unique names.")
         resolved_schedule_set = self.resolved_schedule_set()
+        if self.controlled_demand_profile is not None:
+            if not isinstance(
+                self.controlled_demand_profile,
+                ControlledDemandProfileConfig,
+            ):
+                raise TypeError(
+                    "controlled_demand_profile must be a "
+                    "ControlledDemandProfileConfig."
+                )
+            configured_profile_labels = {
+                state.regime_label for state in self.controlled_demand_profile.states
+            }
+            required_labels = {
+                label
+                for schedule in resolved_schedule_set
+                for label in schedule.labels
+            }
+            missing_labels = required_labels - configured_profile_labels
+            if missing_labels:
+                missing = ", ".join(sorted(label.value for label in missing_labels))
+                raise ValueError(
+                    "controlled_demand_profile.states missing labels: "
+                    f"{missing}."
+                )
         if self.rollout_horizon is not None:
             if any(schedule.rollout_horizon != self.rollout_horizon for schedule in resolved_schedule_set):
                 raise ValueError("All configured schedules must match rollout_horizon.")
@@ -437,7 +533,7 @@ class PublicBenchmarkEvalConfig:
     uncertainty_baselines: UncertaintyBaselineConfig = field(
         default_factory=UncertaintyBaselineConfig
     )
-    results_dir: Path = Path("results/public_benchmark_eval")
+    results_dir: Path = Path("results/public_benchmark_realistic_comparison")
 
     def __post_init__(self) -> None:
         _validate_non_empty_text(self.experiment_name, "experiment_name")
@@ -669,6 +765,8 @@ __all__ = [
     "AgentConfig",
     "BenchmarkConfig",
     "CostConfig",
+    "ControlledDemandProfileConfig",
+    "ControlledDemandStateConfig",
     "ExperimentConfig",
     "PublicBenchmarkEvalConfig",
     "RealDemandBacktestConfig",

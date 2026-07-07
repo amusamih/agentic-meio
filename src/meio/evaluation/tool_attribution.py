@@ -11,7 +11,12 @@ from meio.evaluation.logging_schema import (
     ToolCallTraceRecord,
 )
 
-REMOVED_TOOL_BY_ABLATION = {"full": None}
+REMOVED_TOOL_BY_ABLATION = {
+    "full": None,
+    "without_demand_decomposition": "demand_uncertainty_decomposition_tool",
+    "without_risk_sensitive_evaluation": "risk_sensitive_scenario_evaluator_tool",
+    "without_regret_guard": "counterfactual_regret_guard_tool",
+}
 
 
 def _mean_or_none(values: tuple[float | None, ...]) -> float | None:

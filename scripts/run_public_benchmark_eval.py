@@ -43,7 +43,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("configs/experiment/public_benchmark_eval.toml"),
+        default=Path("configs/experiment/public_benchmark_realistic_comparison.toml"),
         help="Path to the public benchmark evaluation config.",
     )
     parser.add_argument(

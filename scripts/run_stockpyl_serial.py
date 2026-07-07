@@ -18,10 +18,12 @@ from meio.agents.prompts import PROMPT_VERSION, prompt_contract_hash
 from meio.agents.runtime import OrchestrationResponse, OrchestrationRuntime, RuntimeMode
 from meio.agents.scenario_planner import (
     CounterfactualRegretGuardTool,
+    DemandUncertaintyDecompositionTool,
     RegimeBeliefTool,
     RegimeDiagnosisTool,
     RiskSensitiveScenarioEvaluatorTool,
     ScenarioCandidateGeneratorTool,
+    ScenarioEvaluatorTool,
 )
 from meio.agents.telemetry import (
     EpisodeTelemetrySummary,
@@ -36,6 +38,7 @@ from meio.agents.uncertainty_baselines import (
 from meio.config.loaders import load_agent_config, load_benchmark_config, load_experiment_config
 from meio.config.schemas import (
     AgentConfig,
+    ControlledDemandProfileConfig,
     ExperimentConfig,
     UncertaintyBaselineConfig,
 )
@@ -110,10 +113,13 @@ from meio.simulation.serial_benchmark import (
     build_serial_orchestration_request,
     regime_for_period,
 )
-from meio.simulation.state import EpisodeTrace, PeriodTraceRecord
+from meio.simulation.evidence import DemandEvidence
+from meio.simulation.state import EpisodeTrace, Observation, PeriodTraceRecord
 
 
-DEFAULT_EXPERIMENT_CONFIG = Path("configs/experiment/stockpyl_serial.toml")
+DEFAULT_EXPERIMENT_CONFIG = Path(
+    "configs/experiment/stockpyl_serial_realistic_comparison.toml"
+)
 REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE = (
     "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator"
 )
@@ -124,16 +130,41 @@ OFFICIAL_COMPARISON_MODES = (
     REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
 )
 VALIDATION_LANE = "stockpyl_internal"
-TOOL_IDS_BY_ABLATION = {
-    "full": (),
-}
 REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS = (
+    "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+    "counterfactual_regret_guard_tool",
+)
+WITHOUT_DEMAND_DECOMPOSITION_TOOL_IDS = (
     "regime_diagnosis_tool",
     "regime_belief_tool",
     "scenario_candidate_generator_tool",
     "risk_sensitive_scenario_evaluator_tool",
     "counterfactual_regret_guard_tool",
 )
+WITHOUT_RISK_SENSITIVE_EVALUATION_TOOL_IDS = (
+    "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "scenario_evaluator_tool",
+)
+WITHOUT_REGRET_GUARD_TOOL_IDS = (
+    "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+)
+TOOL_IDS_BY_ABLATION = {
+    "full": REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS,
+    "without_demand_decomposition": WITHOUT_DEMAND_DECOMPOSITION_TOOL_IDS,
+    "without_risk_sensitive_evaluation": WITHOUT_RISK_SENSITIVE_EVALUATION_TOOL_IDS,
+    "without_regret_guard": WITHOUT_REGRET_GUARD_TOOL_IDS,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -608,7 +639,7 @@ def _candidate_tool_ids_for_mode(
         _normalize_mode_alias(mode)
         == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE
     ):
-        return REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS
+        return tool_ids
     return tool_ids
 
 
@@ -616,13 +647,15 @@ def _build_mission(
     tool_ablation_variant: str = "full",
     mode: str = REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
 ) -> MissionSpec:
+    admissible_tool_ids = _candidate_tool_ids_for_mode(tool_ablation_variant, mode)
     return MissionSpec(
         mission_id="stockpyl_serial_controlled_rollout",
         objective=(
             "Inspect Stockpyl-backed serial evidence, manage bounded uncertainty, and "
             "keep replenishment orders inside the trusted optimizer boundary."
         ),
-        admissible_tool_ids=_candidate_tool_ids_for_mode(tool_ablation_variant, mode),
+        admissible_tool_ids=admissible_tool_ids,
+        max_tool_steps=max(3, len(admissible_tool_ids)),
     )
 
 
@@ -687,6 +720,94 @@ def _benchmark_case_for_seed(
     )
 
 
+def _controlled_demand_index(
+    *,
+    values: tuple[float, ...],
+    evaluation_case: EvaluationCase,
+    time_index: int,
+) -> int:
+    if not values:
+        raise ValueError("controlled demand values must not be empty.")
+    return (evaluation_case.run_seed + time_index) % len(values)
+
+
+def _controlled_demand_history(
+    *,
+    values: tuple[float, ...],
+    selected_index: int,
+    history_window: int,
+) -> tuple[float, ...]:
+    if history_window <= 0:
+        raise ValueError("history_window must be positive.")
+    value_count = len(values)
+    return tuple(
+        values[(selected_index - history_window + 1 + offset) % value_count]
+        for offset in range(history_window)
+    )
+
+
+def _apply_controlled_demand_profile(
+    observation: Observation,
+    *,
+    profile: ControlledDemandProfileConfig,
+    evaluation_case: EvaluationCase,
+    regime_label: RegimeLabel,
+    time_index: int,
+) -> Observation:
+    values = profile.values_for(regime_label)
+    selected_index = _controlled_demand_index(
+        values=values,
+        evaluation_case=evaluation_case,
+        time_index=time_index,
+    )
+    demand_value = values[selected_index]
+    demand_history = _controlled_demand_history(
+        values=values,
+        selected_index=selected_index,
+        history_window=profile.history_window,
+    )
+    return replace(
+        observation,
+        demand_evidence=DemandEvidence(
+            history=demand_history,
+            latest_realization=(demand_value,),
+            stage_index=observation.demand_evidence.stage_index,
+        ),
+        notes=observation.notes
+        + (
+            f"controlled_demand_profile:{profile.profile_type}",
+            "target_mean_preserved_by_state_template",
+        ),
+    )
+
+
+def _build_period_observation_for_case(
+    experiment_config: ExperimentConfig,
+    benchmark_case: SerialBenchmarkCase,
+    system_state,
+    *,
+    evaluation_case: EvaluationCase,
+    regime_label: RegimeLabel,
+    time_index: int,
+    previous_regime_label: RegimeLabel | None,
+) -> Observation:
+    observation = build_period_observation(
+        benchmark_case,
+        system_state,
+        regime_label,
+        previous_regime_label=previous_regime_label,
+    )
+    if experiment_config.controlled_demand_profile is None:
+        return observation
+    return _apply_controlled_demand_profile(
+        observation,
+        profile=experiment_config.controlled_demand_profile,
+        evaluation_case=evaluation_case,
+        regime_label=regime_label,
+        time_index=time_index,
+    )
+
+
 def _build_runtime(
     agent_config: AgentConfig,
     *,
@@ -701,10 +822,15 @@ def _build_runtime(
     ):
         tools = (
             RegimeDiagnosisTool(),
+            DemandUncertaintyDecompositionTool(),
             RegimeBeliefTool(),
             ScenarioCandidateGeneratorTool(
                 benchmark_case=benchmark_case,
                 robust_config=uncertainty_config.robust_policy,
+                rolling_config=uncertainty_config.scenario_rolling_horizon_policy,
+            ),
+            ScenarioEvaluatorTool(
+                benchmark_case=benchmark_case,
                 rolling_config=uncertainty_config.scenario_rolling_horizon_policy,
             ),
             RiskSensitiveScenarioEvaluatorTool(
@@ -717,7 +843,7 @@ def _build_runtime(
         if client_mode == "real":
             if agent_config.llm_provider != "openai":
                 raise ValueError(
-                    f"Unsupported real LLM provider for this milestone: {agent_config.llm_provider!r}."
+                    f"Unsupported real LLM provider: {agent_config.llm_provider!r}."
                 )
             client = OpenAILLMClient(
                 provider=agent_config.llm_provider,
@@ -1739,10 +1865,13 @@ def _run_orchestrated_rollout(
         previous_regime_label = (
             trace.period_records[-1].regime_label if trace.period_records else None
         )
-        observation = build_period_observation(
+        observation = _build_period_observation_for_case(
+            experiment_config,
             benchmark_case,
             system_state,
-            regime_label,
+            evaluation_case=evaluation_case,
+            regime_label=regime_label,
+            time_index=time_index,
             previous_regime_label=previous_regime_label,
         )
         evidence = build_runtime_evidence(
@@ -2073,10 +2202,13 @@ def _run_baseline_rollout(
         previous_regime_label = (
             trace.period_records[-1].regime_label if trace.period_records else None
         )
-        observation = build_period_observation(
+        observation = _build_period_observation_for_case(
+            experiment_config,
             benchmark_case,
             system_state,
-            regime_label,
+            evaluation_case=evaluation_case,
+            regime_label=regime_label,
+            time_index=time_index,
             previous_regime_label=previous_regime_label,
         )
         evidence = build_runtime_evidence(benchmark_case, observation)
@@ -2274,10 +2406,13 @@ def _run_uncertainty_policy_rollout(
         previous_regime_label = (
             trace.period_records[-1].regime_label if trace.period_records else None
         )
-        observation = build_period_observation(
+        observation = _build_period_observation_for_case(
+            experiment_config,
             benchmark_case,
             system_state,
-            regime_label,
+            evaluation_case=evaluation_case,
+            regime_label=regime_label,
+            time_index=time_index,
             previous_regime_label=previous_regime_label,
         )
         evidence = build_runtime_evidence(benchmark_case, observation)

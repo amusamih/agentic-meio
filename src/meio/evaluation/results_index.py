@@ -10,7 +10,6 @@ from meio.evaluation.logging_schema import ArtifactUseClass
 
 _INTERNAL_ONLY_EXPERIMENT_MARKERS = (
     "smoke",
-    "first_milestone",
     "qualification",
     "schema",
     "debug",
@@ -216,7 +215,7 @@ def index_result_runs(results_root: str | Path = "results") -> tuple[IndexedRunR
                     )
                 )
             continue
-        legacy_validity_gate_passed = bool(
+        metadata_validity_gate_passed = bool(
             metadata_payload.get("validity_gate_passed", False)
             if isinstance(metadata_payload, dict)
             else False
@@ -225,7 +224,7 @@ def index_result_runs(results_root: str | Path = "results") -> tuple[IndexedRunR
             experiment_name=experiment_id or run_group_id,
             benchmark_source=benchmark_source or "",
             provider=provider,
-            validity_gate_passed=legacy_validity_gate_passed,
+            validity_gate_passed=metadata_validity_gate_passed,
             rollout_fidelity_gate_passed=bool(
                 metadata_payload.get("rollout_fidelity_gate_passed", False)
                 if isinstance(metadata_payload, dict)
@@ -252,7 +251,7 @@ def index_result_runs(results_root: str | Path = "results") -> tuple[IndexedRunR
                     _payload_string(metadata_payload, "artifact_use_class")
                     or governance.artifact_use_class.value
                 ),
-                validity_gate_passed=legacy_validity_gate_passed,
+                validity_gate_passed=metadata_validity_gate_passed,
                 eligibility_notes=tuple(
                     metadata_payload.get("eligibility_notes", governance.eligibility_notes)
                     if isinstance(metadata_payload, dict)

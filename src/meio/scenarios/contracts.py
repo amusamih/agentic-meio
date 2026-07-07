@@ -1,4 +1,4 @@
-"""Typed scenario-update contracts for the first MEIO milestone."""
+"""Typed scenario-update contracts for protected downstream handoff."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class ScenarioAdjustmentSummary:
 
 @dataclass(frozen=True, slots=True)
 class ScenarioSummary:
-    """Compact scenario representation for the first serial benchmark path."""
+    """Compact scenario representation for the serial benchmark path."""
 
     scenario_id: str
     regime_label: RegimeLabel

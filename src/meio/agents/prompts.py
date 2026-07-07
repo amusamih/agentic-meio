@@ -8,13 +8,23 @@ import json
 from meio.agents.llm_client import LLMClientContext, LLMMessage
 from meio.contracts import OperationalSubgoal, RegimeLabel, ToolSpec, UpdateRequestType
 
-PROMPT_VERSION = "meio.llm_orchestrator.v14"
+PROMPT_VERSION = "meio.llm_orchestrator.v16"
 
 REGRET_GUARDED_TOOL_SEQUENCE = (
     "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
     "regime_belief_tool",
     "scenario_candidate_generator_tool",
     "risk_sensitive_scenario_evaluator_tool",
+    "counterfactual_regret_guard_tool",
+)
+SCENARIO_PLANNING_TOOL_ORDER = (
+    "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
+    "regime_belief_tool",
+    "scenario_candidate_generator_tool",
+    "risk_sensitive_scenario_evaluator_tool",
+    "scenario_evaluator_tool",
     "counterfactual_regret_guard_tool",
 )
 
@@ -30,9 +40,10 @@ def build_system_prompt() -> str:
         "Never emit replenishment orders, quantities, or raw control actions. "
         "The optimizer is the sole order-producing boundary. "
         "Use the least strong uncertainty update that is supported by the evidence. "
-        "When the regret-guarded scenario-planning tools are available, request them in the "
-        "provided order so the deterministic tools perform diagnosis, candidate generation, "
-        "risk-sensitive scoring, and counterfactual regret guarding before downstream handoff. "
+        "When scenario-planning tools are available, request only the available "
+        "tools in the provided order so the deterministic tools perform diagnosis, "
+        "uncertainty decomposition when available, candidate generation, evaluation, "
+        "and guarded handoff when available. "
         "Return exactly one JSON object and nothing else. "
         "Do not use markdown, code fences, headings, or prose outside the JSON object."
     )
@@ -67,7 +78,7 @@ def build_user_prompt(
         "inventing an intervention. If demand or lead-time signals materially depart from "
         "baseline and planning inputs should change, do not hide that by returning normal "
         "plus no_action. If recovery is already carrying heavy prior pipeline or backlog, "
-        "the regret guard should be used to avoid over-correcting."
+        "use cautious scenario planning to avoid over-correcting."
     )
 
 
@@ -202,20 +213,33 @@ def _build_decision_signals(context: LLMClientContext) -> str:
 
 def _build_decision_guidance(available_tool_ids: tuple[str, ...]) -> str:
     available_tools_text = json.dumps(list(available_tool_ids))
-    sequence_available = all(tool_id in available_tool_ids for tool_id in REGRET_GUARDED_TOOL_SEQUENCE)
+    scenario_tool_ids = _ordered_available_scenario_tool_ids(available_tool_ids)
     sequence_guidance = ""
-    if sequence_available:
+    if scenario_tool_ids:
+        scenario_tools_text = ", ".join(f"`{tool_id}`" for tool_id in scenario_tool_ids)
+        decomposition_text = (
+            "separate demand-level and demand-variability evidence, "
+            if "demand_uncertainty_decomposition_tool" in scenario_tool_ids
+            else ""
+        )
+        risk_text = (
+            "risk-sensitive "
+            if "risk_sensitive_scenario_evaluator_tool" in scenario_tool_ids
+            else ""
+        )
+        guard_text = (
+            " and let the regret guard check the final proposal"
+            if "counterfactual_regret_guard_tool" in scenario_tool_ids
+            else ""
+        )
         sequence_guidance = (
             "\n"
-            "- If intervention is justified, request the full regret-guarded sequence: "
-            "`regime_diagnosis_tool`, `regime_belief_tool`, "
-            "`scenario_candidate_generator_tool`, "
-            "`risk_sensitive_scenario_evaluator_tool`, and "
-            "`counterfactual_regret_guard_tool`.\n"
-            "- The first two tools diagnose the current regime and uncertainty belief; "
-            "the generator constructs candidate scenario inputs; the evaluator scores "
-            "expected cost plus uncertainty quality; the regret guard blocks candidates "
-            "that are not justified against the protected incumbent.\n"
+            "- If intervention is justified, request the available scenario-planning sequence: "
+            f"{scenario_tools_text}.\n"
+            "- The scenario-planning tools diagnose the current regime, "
+            f"{decomposition_text}form uncertainty belief when available, construct "
+            f"candidate scenario inputs, score them using {risk_text}cost and service "
+            f"criteria{guard_text}.\n"
             "- Your role is to choose whether the evidence warrants this bounded tool "
             "path and to report regime, confidence, and update intent. The tools and "
             "trusted downstream decision component handle scenario resolution and orders."
@@ -224,17 +248,15 @@ def _build_decision_guidance(available_tool_ids: tuple[str, ...]) -> str:
         "Decision guidance:\n"
         f"- You may only request tools from available_tool_ids={available_tools_text}.\n"
         "- Do not request tools for routine normal periods unless evidence shows material demand, lead-time, backlog, or pipeline stress.\n"
-        "- Repeated stress does not automatically require stronger escalation; prefer a bounded update and let the regret guard check whether it is worth applying.\n"
-        "- Recovery with high carried pipeline or backlog is risky; use the regret guard to avoid over-ordering from stale stress.\n"
+        "- Repeated stress does not automatically require stronger escalation; prefer a bounded update supported by the available scenario-planning tools.\n"
+        "- Recovery with high carried pipeline or backlog is risky; avoid over-ordering from stale stress.\n"
         "- The agent may request scenario updates, but must never generate raw replenishment requests."
         f"{sequence_guidance}"
     )
 
 
 def _build_few_shot_examples(available_tool_ids: tuple[str, ...] = REGRET_GUARDED_TOOL_SEQUENCE) -> str:
-    selected_tool_ids = tuple(
-        tool_id for tool_id in REGRET_GUARDED_TOOL_SEQUENCE if tool_id in available_tool_ids
-    )
+    selected_tool_ids = _ordered_available_scenario_tool_ids(available_tool_ids)
     tool_json = json.dumps(list(selected_tool_ids), separators=(",", ":"))
     return (
         "Examples:\n"
@@ -248,13 +270,23 @@ def _build_few_shot_examples(available_tool_ids: tuple[str, ...] = REGRET_GUARDE
         ',"regime_label":"demand_regime_shift","confidence":0.88,'
         '"update_request_types":["switch_demand_regime","widen_uncertainty"],'
         '"request_replan":true,'
-        '"rationale":"Material departure from baseline warrants bounded scenario planning and regret guarding."}\n'
+        '"rationale":"Material departure from baseline warrants bounded scenario planning."}\n'
         "3. Recovery with high carried load:\n"
         '{"selected_subgoal":"query_uncertainty","candidate_tool_ids":'
         f"{tool_json}"
         ',"regime_label":"recovery","confidence":0.78,'
         '"update_request_types":["reweight_scenarios"],"request_replan":true,'
-        '"rationale":"Recovery is visible but carried pipeline or backlog means the regret guard should prevent over-correction."}'
+        '"rationale":"Recovery is visible but carried pipeline or backlog warrants cautious scenario planning."}'
+    )
+
+
+def _ordered_available_scenario_tool_ids(
+    available_tool_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        tool_id
+        for tool_id in SCENARIO_PLANNING_TOOL_ORDER
+        if tool_id in available_tool_ids
     )
 
 

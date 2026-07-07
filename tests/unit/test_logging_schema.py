@@ -45,8 +45,8 @@ def test_experiment_metadata_construction_accepts_typed_resolved_config() -> Non
 
 def test_run_manifest_record_construction_captures_written_artifacts() -> None:
     manifest = RunManifestRecord(
-        experiment_id="stockpyl_serial_multi_eval_all",
-        run_group_id="stockpyl_serial_multi_eval_all_20260417T110217Z",
+        experiment_id="stockpyl_serial_realistic_comparison_all",
+        run_group_id="stockpyl_serial_realistic_comparison_all_20260417T110217Z",
         config_hash="deadbeef",
         benchmark_id="serial_3_echelon",
         benchmark_source="stockpyl_serial",
@@ -102,6 +102,7 @@ def test_step_trace_record_construction_preserves_typed_period_fields() -> None:
         selected_subgoal="query_uncertainty",
         selected_tools=(
             "regime_diagnosis_tool",
+            "demand_uncertainty_decomposition_tool",
             "regime_belief_tool",
             "scenario_candidate_generator_tool",
             "risk_sensitive_scenario_evaluator_tool",

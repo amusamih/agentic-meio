@@ -3,6 +3,7 @@ name = "real_demand_backtest_panel_realistic_comparison"
 benchmark_config = "configs/benchmark/serial_3_echelon.toml"
 agent_config = "configs/agent/live_llm.toml"
 discovery_module = "ReplenishmentEnv"
+dataset_root = "third_party/ReplenishmentEnv/ReplenishmentEnv"
 mode_set = [
   "deterministic_baseline",
   "robust_policy",

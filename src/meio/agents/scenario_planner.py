@@ -9,6 +9,7 @@ downstream replenishment rule. No tool emits raw replenishment orders.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 import math
 import random
 from statistics import mean
@@ -93,6 +94,76 @@ class RegimeDiagnosisRecord:
             raise ValueError("demand_window must not be empty.")
         if not self.leadtime_window:
             raise ValueError("leadtime_window must not be empty.")
+        if not self.rationale.strip():
+            raise ValueError("rationale must be non-empty.")
+
+
+class DemandUncertaintyType(StrEnum):
+    """Mean/spread interpretation used before scenario-candidate generation."""
+
+    STABLE = "stable"
+    MEAN_SHIFT = "mean_shift"
+    SPREAD_INCREASE = "spread_increase"
+    SPREAD_DECREASE = "spread_decrease"
+    MIXED = "mixed"
+
+
+@dataclass(frozen=True, slots=True)
+class DemandUncertaintyDecompositionRecord:
+    """Traceable decomposition of demand mean movement versus spread movement."""
+
+    uncertainty_type: DemandUncertaintyType
+    baseline_mean: float
+    recent_mean: float
+    baseline_cv_reference: float
+    recent_std: float
+    recent_cv: float
+    mean_delta: float
+    mean_delta_ratio: float
+    spread_ratio: float
+    recommended_demand_outlook: float
+    recommended_safety_buffer_scale: float
+    recommended_update_types: tuple[UpdateRequestType, ...]
+    confidence: float
+    rationale: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.uncertainty_type, DemandUncertaintyType):
+            raise TypeError("uncertainty_type must be a DemandUncertaintyType.")
+        for field_name in (
+            "baseline_mean",
+            "recent_mean",
+            "baseline_cv_reference",
+            "recent_std",
+            "recent_cv",
+            "spread_ratio",
+            "recommended_demand_outlook",
+            "recommended_safety_buffer_scale",
+        ):
+            if getattr(self, field_name) < 0.0:
+                raise ValueError(f"{field_name} must be non-negative.")
+        if self.baseline_mean <= 0.0:
+            raise ValueError("baseline_mean must be positive.")
+        if self.baseline_cv_reference <= 0.0:
+            raise ValueError("baseline_cv_reference must be positive.")
+        if self.recommended_demand_outlook <= 0.0:
+            raise ValueError("recommended_demand_outlook must be positive.")
+        if self.recommended_safety_buffer_scale <= 0.0:
+            raise ValueError("recommended_safety_buffer_scale must be positive.")
+        object.__setattr__(
+            self,
+            "recommended_update_types",
+            tuple(self.recommended_update_types),
+        )
+        if not self.recommended_update_types:
+            raise ValueError("recommended_update_types must not be empty.")
+        for update_type in self.recommended_update_types:
+            if not isinstance(update_type, UpdateRequestType):
+                raise TypeError(
+                    "recommended_update_types must contain UpdateRequestType values."
+                )
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("confidence must be within [0.0, 1.0].")
         if not self.rationale.strip():
             raise ValueError("rationale must be non-empty.")
 
@@ -335,7 +406,67 @@ class RegimeDiagnosisTool(BoundedTool):
             structured_output={"regime_diagnosis": diagnosis},
             confidence=0.92,
             provenance="regime_diagnosis_tool",
-            next_tool_id="scenario_candidate_generator_tool",
+            next_tool_id="demand_uncertainty_decomposition_tool",
+            next_subgoal=OperationalSubgoal.QUERY_UNCERTAINTY,
+            request_replan=False,
+            emits_raw_orders=False,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DemandUncertaintyDecompositionTool(BoundedTool):
+    """Separate demand-level movement from demand-spread movement."""
+
+    baseline_cv_reference: float = 0.25
+    mean_shift_relative_threshold: float = 0.12
+    mean_shift_absolute_threshold: float = 1.0
+    spread_increase_ratio_threshold: float = 1.35
+    spread_decrease_ratio_threshold: float = 0.60
+    tool_id: str = "demand_uncertainty_decomposition_tool"
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(
+            tool_id=self.tool_id,
+            tool_class=ToolClass.DETERMINISTIC_STATISTICAL,
+            supported_subgoals=(
+                OperationalSubgoal.QUERY_UNCERTAINTY,
+                OperationalSubgoal.REQUEST_REPLAN,
+            ),
+            description=(
+                "Demand uncertainty decomposition tool. It distinguishes demand "
+                "mean shifts from spread changes and returns bounded scenario-input "
+                "guidance for candidate generation."
+            ),
+            produces_raw_orders=False,
+        )
+
+    def invoke(self, invocation: ToolInvocation) -> ToolResult:
+        _validate_invocation(
+            invocation,
+            tool_name="DemandUncertaintyDecompositionTool",
+        )
+        diagnosis = _latest_diagnosis(invocation)
+        decomposition = _build_demand_uncertainty_decomposition(
+            invocation=invocation,
+            diagnosis=diagnosis,
+            baseline_cv_reference=self.baseline_cv_reference,
+            mean_shift_relative_threshold=self.mean_shift_relative_threshold,
+            mean_shift_absolute_threshold=self.mean_shift_absolute_threshold,
+            spread_increase_ratio_threshold=self.spread_increase_ratio_threshold,
+            spread_decrease_ratio_threshold=self.spread_decrease_ratio_threshold,
+        )
+        return ToolResult(
+            tool_id=invocation.tool_id,
+            tool_class=invocation.tool_class,
+            subgoal=invocation.subgoal,
+            status=ToolStatus.SUCCESS,
+            structured_output={
+                "demand_uncertainty_decomposition": decomposition,
+            },
+            confidence=decomposition.confidence,
+            provenance="demand_uncertainty_decomposition_tool",
+            next_tool_id="regime_belief_tool",
             next_subgoal=OperationalSubgoal.QUERY_UNCERTAINTY,
             request_replan=False,
             emits_raw_orders=False,
@@ -368,7 +499,8 @@ class RegimeBeliefTool(BoundedTool):
     def invoke(self, invocation: ToolInvocation) -> ToolResult:
         _validate_invocation(invocation, tool_name="RegimeBeliefTool")
         diagnosis = _latest_diagnosis(invocation)
-        belief = _build_regime_belief(diagnosis)
+        decomposition = _latest_demand_uncertainty_decomposition(invocation)
+        belief = _build_regime_belief(diagnosis, decomposition)
         return ToolResult(
             tool_id=invocation.tool_id,
             tool_class=invocation.tool_class,
@@ -412,9 +544,11 @@ class ScenarioCandidateGeneratorTool(BoundedTool):
     def invoke(self, invocation: ToolInvocation) -> ToolResult:
         _validate_invocation(invocation, tool_name="ScenarioCandidateGeneratorTool")
         diagnosis = _latest_diagnosis(invocation)
+        decomposition = _latest_demand_uncertainty_decomposition(invocation)
         candidate_set = _build_candidate_set(
             invocation=invocation,
             diagnosis=diagnosis,
+            decomposition=decomposition,
             benchmark_case=self.benchmark_case,
             robust_config=self.robust_config,
             rolling_config=self.rolling_config,
@@ -427,7 +561,7 @@ class ScenarioCandidateGeneratorTool(BoundedTool):
             structured_output={"scenario_candidate_set": candidate_set},
             confidence=0.90,
             provenance="scenario_candidate_generator_tool",
-            next_tool_id="scenario_evaluator_tool",
+            next_tool_id="risk_sensitive_scenario_evaluator_tool",
             next_subgoal=OperationalSubgoal.QUERY_UNCERTAINTY,
             request_replan=False,
             emits_raw_orders=False,
@@ -572,9 +706,11 @@ class RiskSensitiveScenarioEvaluatorTool(BoundedTool):
         _validate_invocation(invocation, tool_name="RiskSensitiveScenarioEvaluatorTool")
         candidate_set = _latest_candidate_set(invocation)
         diagnosis = _latest_diagnosis(invocation)
+        decomposition = _latest_demand_uncertainty_decomposition(invocation)
         belief = _latest_regime_belief(invocation)
         scenario_paths = _belief_scenario_paths(
             diagnosis=diagnosis,
+            decomposition=decomposition,
             belief=belief,
             config=self.rolling_config,
             time_index=invocation.system_state.time_index,
@@ -584,6 +720,7 @@ class RiskSensitiveScenarioEvaluatorTool(BoundedTool):
                 _risk_sensitive_candidate_score(
                     candidate=candidate,
                     diagnosis=diagnosis,
+                    decomposition=decomposition,
                     belief=belief,
                     system_state=invocation.system_state,
                     benchmark_case=self.benchmark_case,
@@ -682,10 +819,12 @@ class CounterfactualRegretGuardTool(BoundedTool):
         _validate_invocation(invocation, tool_name="CounterfactualRegretGuardTool")
         candidate_set = _latest_candidate_set(invocation)
         diagnosis = _latest_diagnosis(invocation)
+        decomposition = _latest_demand_uncertainty_decomposition(invocation)
         belief = _latest_regime_belief(invocation)
         evaluation = _latest_planner_evaluation(invocation)
         selected_candidate_id, guard_reason = _guarded_candidate_id(
             diagnosis=diagnosis,
+            decomposition=decomposition,
             belief=belief,
             evaluation=evaluation,
             time_index=invocation.system_state.time_index,
@@ -820,10 +959,291 @@ def _case_family(
     return "stable_or_low_risk"
 
 
-def _build_regime_belief(diagnosis: RegimeDiagnosisRecord) -> RegimeBeliefRecord:
+def _build_demand_uncertainty_decomposition(
+    *,
+    invocation: ToolInvocation,
+    diagnosis: RegimeDiagnosisRecord,
+    baseline_cv_reference: float,
+    mean_shift_relative_threshold: float,
+    mean_shift_absolute_threshold: float,
+    spread_increase_ratio_threshold: float,
+    spread_decrease_ratio_threshold: float,
+) -> DemandUncertaintyDecompositionRecord:
+    """Classify whether recent demand movement is mostly level, spread, or both."""
+
+    if baseline_cv_reference <= 0.0:
+        raise ValueError("baseline_cv_reference must be positive.")
+    baseline_mean = (
+        float(invocation.evidence.demand_baseline_value)
+        if invocation.evidence.demand_baseline_value is not None
+        and invocation.evidence.demand_baseline_value > 0.0
+        else max(mean(diagnosis.demand_window), 1.0)
+    )
+    recent_mean = max(mean(diagnosis.demand_window), 0.0)
+    recent_std = _population_std(diagnosis.demand_window)
+    recent_cv = recent_std / max(recent_mean, 1e-9)
+    mean_delta = recent_mean - baseline_mean
+    mean_delta_ratio = mean_delta / baseline_mean
+    spread_ratio = recent_cv / baseline_cv_reference
+    mean_threshold = max(
+        mean_shift_absolute_threshold,
+        baseline_mean * mean_shift_relative_threshold,
+    )
+    mean_shift_detected = abs(mean_delta) >= mean_threshold
+    spread_increase_detected = spread_ratio >= spread_increase_ratio_threshold
+    spread_decrease_detected = spread_ratio <= spread_decrease_ratio_threshold
+
+    if mean_shift_detected and spread_increase_detected:
+        uncertainty_type = DemandUncertaintyType.MIXED
+    elif mean_shift_detected:
+        uncertainty_type = DemandUncertaintyType.MEAN_SHIFT
+    elif spread_increase_detected:
+        uncertainty_type = DemandUncertaintyType.SPREAD_INCREASE
+    elif spread_decrease_detected:
+        uncertainty_type = DemandUncertaintyType.SPREAD_DECREASE
+    else:
+        uncertainty_type = DemandUncertaintyType.STABLE
+
+    if uncertainty_type is DemandUncertaintyType.MEAN_SHIFT:
+        recommended_demand_outlook = max(
+            diagnosis.latest_demand,
+            recent_mean,
+            baseline_mean + mean_delta,
+            1.0,
+        )
+        safety_buffer_scale = 1.02
+        update_types = (UpdateRequestType.SWITCH_DEMAND_REGIME,)
+        rationale = "Recent mean is materially displaced from the baseline."
+    elif uncertainty_type is DemandUncertaintyType.MIXED:
+        recommended_demand_outlook = max(recent_mean, baseline_mean + mean_delta, 1.0)
+        safety_buffer_scale = _spread_safety_buffer_scale(spread_ratio, base=1.06)
+        update_types = (
+            UpdateRequestType.SWITCH_DEMAND_REGIME,
+            UpdateRequestType.WIDEN_UNCERTAINTY,
+        )
+        rationale = "Recent evidence combines a mean movement with wider dispersion."
+    elif uncertainty_type is DemandUncertaintyType.SPREAD_INCREASE:
+        recommended_demand_outlook = max(recent_mean, baseline_mean, 1.0)
+        safety_buffer_scale = _spread_safety_buffer_scale(spread_ratio, base=1.04)
+        update_types = (UpdateRequestType.WIDEN_UNCERTAINTY,)
+        rationale = (
+            "Recent dispersion increased while the mean remains close to baseline; "
+            "protect service through the buffer rather than a demand-mean jump."
+        )
+    elif uncertainty_type is DemandUncertaintyType.SPREAD_DECREASE:
+        recommended_demand_outlook = max(recent_mean, min(baseline_mean, recent_mean), 1.0)
+        safety_buffer_scale = 0.98
+        update_types = (UpdateRequestType.REWEIGHT_SCENARIOS,)
+        rationale = "Recent dispersion is lower than the reference spread."
+    else:
+        recommended_demand_outlook = max(recent_mean, baseline_mean, 1.0)
+        safety_buffer_scale = 1.0
+        update_types = (UpdateRequestType.KEEP_CURRENT,)
+        rationale = "Recent mean and spread are close to the reference operating level."
+
+    signal_strength = max(
+        abs(mean_delta_ratio) / max(mean_shift_relative_threshold, 1e-9),
+        abs(spread_ratio - 1.0),
+    )
+    confidence = min(0.96, 0.72 + 0.10 * signal_strength)
+    return DemandUncertaintyDecompositionRecord(
+        uncertainty_type=uncertainty_type,
+        baseline_mean=baseline_mean,
+        recent_mean=recent_mean,
+        baseline_cv_reference=baseline_cv_reference,
+        recent_std=recent_std,
+        recent_cv=recent_cv,
+        mean_delta=mean_delta,
+        mean_delta_ratio=mean_delta_ratio,
+        spread_ratio=spread_ratio,
+        recommended_demand_outlook=recommended_demand_outlook,
+        recommended_safety_buffer_scale=safety_buffer_scale,
+        recommended_update_types=update_types,
+        confidence=confidence,
+        rationale=rationale,
+    )
+
+
+def _spread_safety_buffer_scale(spread_ratio: float, *, base: float) -> float:
+    spread_excess = max(0.0, spread_ratio - 1.0)
+    return min(1.18, max(0.95, base + 0.055 * spread_excess))
+
+
+def _population_std(values: tuple[float, ...]) -> float:
+    if len(values) <= 1:
+        return 0.0
+    center = mean(values)
+    return math.sqrt(sum((float(value) - center) ** 2 for value in values) / len(values))
+
+
+def _build_regime_belief(
+    diagnosis: RegimeDiagnosisRecord,
+    decomposition: DemandUncertaintyDecompositionRecord | None = None,
+) -> RegimeBeliefRecord:
     """Build a small, normalized hidden-regime belief from the diagnosis."""
 
-    if diagnosis.case_family == "stable_or_low_risk":
+    if (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.SPREAD_INCREASE
+    ):
+        raw_entries = (
+            (
+                RegimeLabel.NORMAL,
+                0.44,
+                1.00,
+                1.00,
+                "Mean remains close to baseline despite wider demand spread.",
+            ),
+            (
+                RegimeLabel.DEMAND_REGIME_SHIFT,
+                0.26,
+                1.08,
+                1.00,
+                "Retain a bounded mean-shift branch for high-demand tails.",
+            ),
+            (
+                RegimeLabel.JOINT_DISRUPTION,
+                0.18,
+                1.05,
+                1.12,
+                "Wider demand spread can coincide with lead-time risk.",
+            ),
+            (
+                RegimeLabel.RECOVERY,
+                0.12,
+                0.92,
+                1.00,
+                "Allow mean-preserving reversion after high tail realizations.",
+            ),
+        )
+        tail_weight = 0.20
+        service_weight = 0.34
+        overreaction_weight = 0.24
+        rationale = (
+            "Spread-aware belief emphasizes service tails while penalizing "
+            "demand-mean overreaction."
+        )
+    elif (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.MIXED
+    ):
+        raw_entries = (
+            (
+                RegimeLabel.DEMAND_REGIME_SHIFT,
+                0.38,
+                1.12,
+                1.00,
+                "Recent mean movement is present but should remain bounded.",
+            ),
+            (
+                RegimeLabel.JOINT_DISRUPTION,
+                0.24,
+                1.08,
+                1.12,
+                "Wide demand spread can coincide with lead-time risk.",
+            ),
+            (
+                RegimeLabel.NORMAL,
+                0.24,
+                1.00,
+                1.00,
+                "Part of the signal may be high-tail variation rather than a new mean.",
+            ),
+            (
+                RegimeLabel.RECOVERY,
+                0.14,
+                0.94,
+                1.00,
+                "Retain a mean-reversion branch after tail-heavy observations.",
+            ),
+        )
+        tail_weight = 0.22
+        service_weight = 0.32
+        overreaction_weight = 0.18
+        rationale = (
+            "Mixed mean-and-spread belief protects service while limiting "
+            "conversion of a tail realization into a durable demand mean."
+        )
+    elif (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.SPREAD_DECREASE
+    ):
+        raw_entries = (
+            (
+                RegimeLabel.RECOVERY,
+                0.46,
+                0.94,
+                1.00,
+                "Low dispersion supports calmer demand uncertainty.",
+            ),
+            (
+                RegimeLabel.NORMAL,
+                0.36,
+                1.00,
+                1.00,
+                "Normal continuation remains plausible.",
+            ),
+            (
+                RegimeLabel.DEMAND_REGIME_SHIFT,
+                0.12,
+                1.10,
+                1.00,
+                "Retain a small delayed-shift branch.",
+            ),
+            (
+                RegimeLabel.SUPPLY_DISRUPTION,
+                0.06,
+                1.00,
+                1.12,
+                "Retain low lead-time-risk branch.",
+            ),
+        )
+        tail_weight = 0.08
+        service_weight = 0.16
+        overreaction_weight = 0.28
+        rationale = "Calmer spread-aware belief penalizes unnecessary protection."
+    elif (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.STABLE
+    ):
+        raw_entries = (
+            (
+                RegimeLabel.NORMAL,
+                0.58,
+                1.00,
+                1.00,
+                "Mean and spread evidence remain close to the operating reference.",
+            ),
+            (
+                RegimeLabel.RECOVERY,
+                0.18,
+                0.94,
+                1.00,
+                "Allow a calmer continuation after isolated high observations.",
+            ),
+            (
+                RegimeLabel.DEMAND_REGIME_SHIFT,
+                0.14,
+                1.10,
+                1.00,
+                "Retain a bounded delayed-shift branch.",
+            ),
+            (
+                RegimeLabel.SUPPLY_DISRUPTION,
+                0.10,
+                1.00,
+                1.12,
+                "Retain a modest lead-time-risk branch.",
+            ),
+        )
+        tail_weight = 0.08
+        service_weight = 0.18
+        overreaction_weight = 0.30
+        rationale = (
+            "Stable decomposition dampens latest-tail overreaction while "
+            "retaining a small delayed-stress belief."
+        )
+    elif diagnosis.case_family == "stable_or_low_risk":
         raw_entries = (
             (
                 RegimeLabel.NORMAL,
@@ -1108,6 +1528,7 @@ def _build_candidate_set(
     *,
     invocation: ToolInvocation,
     diagnosis: RegimeDiagnosisRecord,
+    decomposition: DemandUncertaintyDecompositionRecord | None,
     benchmark_case: SerialBenchmarkCase,
     robust_config: RobustPolicyConfig,
     rolling_config: ScenarioRollingHorizonPolicyConfig,
@@ -1139,16 +1560,20 @@ def _build_candidate_set(
             rationale="Empirical high-quantile robust protection candidate.",
         )
     )
-    candidates.extend(_agentic_regime_candidates(diagnosis))
+    candidates.extend(_spread_aware_candidates(diagnosis, decomposition))
+    candidates.extend(_agentic_regime_candidates(diagnosis, decomposition))
     deduped = _dedupe_candidates(tuple(candidates))
+    generator_notes = [
+        "rolling_horizon_incumbent_included",
+        f"case_family:{diagnosis.case_family}",
+        "agentic_candidates_are_regime_conditioned_bounded_scenario_inputs",
+    ]
+    if decomposition is not None:
+        generator_notes.append(f"demand_uncertainty_type:{decomposition.uncertainty_type.value}")
     return ScenarioCandidateSet(
         candidates=deduped,
         incumbent_candidate_id="rolling_horizon_incumbent",
-        generator_notes=(
-            "rolling_horizon_incumbent_included",
-            f"case_family:{diagnosis.case_family}",
-            "agentic_candidates_are_regime_conditioned_bounded_scenario_inputs",
-        ),
+        generator_notes=tuple(generator_notes),
     )
 
 
@@ -1256,6 +1681,7 @@ def _update_candidate(
 
 def _agentic_regime_candidates(
     diagnosis: RegimeDiagnosisRecord,
+    decomposition: DemandUncertaintyDecompositionRecord | None = None,
 ) -> tuple[ScenarioCandidateRecord, ...]:
     high_demand = max(
         diagnosis.latest_demand,
@@ -1268,11 +1694,15 @@ def _agentic_regime_candidates(
         _empirical_quantile(diagnosis.leadtime_window, 0.75),
     )
     candidates: list[ScenarioCandidateRecord] = []
+    spread_only = (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.SPREAD_INCREASE
+    )
     if diagnosis.case_family in {
         "initial_demand_shift",
         "sustained_demand_shift",
         "joint_demand_leadtime_stress",
-    }:
+    } and not spread_only:
         candidates.append(
             _bounded_candidate(
                 candidate_id="agentic_fast_demand_reweight",
@@ -1338,6 +1768,208 @@ def _agentic_regime_candidates(
             )
         )
     return tuple(candidates)
+
+
+def _spread_aware_candidates(
+    diagnosis: RegimeDiagnosisRecord,
+    decomposition: DemandUncertaintyDecompositionRecord | None,
+) -> tuple[ScenarioCandidateRecord, ...]:
+    if decomposition is None:
+        return ()
+    if decomposition.uncertainty_type is DemandUncertaintyType.STABLE:
+        return (
+            _bounded_candidate(
+                candidate_id="agentic_stable_reference_guard",
+                diagnosis=diagnosis,
+                demand_outlook=decomposition.recommended_demand_outlook,
+                leadtime_outlook=max(
+                    diagnosis.latest_leadtime,
+                    mean(diagnosis.leadtime_window),
+                ),
+                safety_buffer_scale=1.0,
+                update_types=(UpdateRequestType.REWEIGHT_SCENARIOS,),
+                rationale=(
+                    "Stable reference candidate follows the decomposed operating "
+                    "level instead of treating an isolated tail as a regime shift."
+                ),
+            ),
+        )
+    if decomposition.uncertainty_type is DemandUncertaintyType.SPREAD_INCREASE:
+        return (
+            _bounded_candidate(
+                candidate_id="agentic_mean_preserving_spread_guard",
+                diagnosis=diagnosis,
+                demand_outlook=decomposition.recommended_demand_outlook,
+                leadtime_outlook=diagnosis.latest_leadtime,
+                safety_buffer_scale=decomposition.recommended_safety_buffer_scale,
+                update_types=decomposition.recommended_update_types,
+                rationale=(
+                    "Mean-preserving spread candidate widens uncertainty protection "
+                    "without converting high-tail demand into a demand-mean shift."
+                ),
+            ),
+            _bounded_candidate(
+                candidate_id="agentic_spread_service_floor_guard",
+                diagnosis=diagnosis,
+                demand_outlook=_service_floor_demand_outlook(
+                    decomposition,
+                    max_multiplier=1.08,
+                ),
+                leadtime_outlook=max(
+                    diagnosis.latest_leadtime,
+                    _empirical_quantile(diagnosis.leadtime_window, 0.75),
+                ),
+                safety_buffer_scale=_service_floor_safety_buffer_scale(
+                    decomposition,
+                    additive=0.065,
+                ),
+                update_types=decomposition.recommended_update_types,
+                rationale=(
+                    "Spread service-floor candidate preserves the demand mean "
+                    "while adding bounded buffer and lead-time cover for tail risk."
+                ),
+            ),
+            _bounded_candidate(
+                candidate_id="agentic_spread_tail_cover_guard",
+                diagnosis=diagnosis,
+                demand_outlook=_tail_cover_demand_outlook(
+                    diagnosis,
+                    decomposition,
+                    cap_multiplier=1.45,
+                ),
+                leadtime_outlook=max(
+                    diagnosis.latest_leadtime,
+                    _empirical_quantile(diagnosis.leadtime_window, 0.75),
+                ),
+                safety_buffer_scale=_service_floor_safety_buffer_scale(
+                    decomposition,
+                    additive=0.045,
+                ),
+                update_types=decomposition.recommended_update_types,
+                rationale=(
+                    "Spread tail-cover candidate converts high dispersion into a "
+                    "bounded tail-cover demand equivalent for the downstream rule."
+                ),
+            ),
+        )
+    if decomposition.uncertainty_type is DemandUncertaintyType.MIXED:
+        return (
+            _bounded_candidate(
+                candidate_id="agentic_mixed_mean_spread_guard",
+                diagnosis=diagnosis,
+                demand_outlook=decomposition.recommended_demand_outlook,
+                leadtime_outlook=diagnosis.latest_leadtime,
+                safety_buffer_scale=decomposition.recommended_safety_buffer_scale,
+                update_types=decomposition.recommended_update_types,
+                rationale=(
+                    "Mixed mean-and-spread candidate combines bounded mean response "
+                    "with explicit uncertainty widening."
+                ),
+            ),
+            _bounded_candidate(
+                candidate_id="agentic_mixed_service_floor_guard",
+                diagnosis=diagnosis,
+                demand_outlook=_service_floor_demand_outlook(
+                    decomposition,
+                    max_multiplier=1.12,
+                ),
+                leadtime_outlook=max(
+                    diagnosis.latest_leadtime,
+                    _empirical_quantile(diagnosis.leadtime_window, 0.75),
+                ),
+                safety_buffer_scale=_service_floor_safety_buffer_scale(
+                    decomposition,
+                    additive=0.055,
+                ),
+                update_types=decomposition.recommended_update_types,
+                rationale=(
+                    "Mixed service-floor candidate balances bounded mean response "
+                    "with additional spread protection under service-risk pressure."
+                ),
+            ),
+            _bounded_candidate(
+                candidate_id="agentic_mixed_tail_cover_guard",
+                diagnosis=diagnosis,
+                demand_outlook=_tail_cover_demand_outlook(
+                    diagnosis,
+                    decomposition,
+                    cap_multiplier=2.15,
+                ),
+                leadtime_outlook=max(
+                    diagnosis.latest_leadtime,
+                    _empirical_quantile(diagnosis.leadtime_window, 0.75),
+                ),
+                safety_buffer_scale=_service_floor_safety_buffer_scale(
+                    decomposition,
+                    additive=0.040,
+                ),
+                update_types=decomposition.recommended_update_types,
+                rationale=(
+                    "Mixed tail-cover candidate protects against severe high-tail "
+                    "dispersion without treating the latest realization as the mean."
+                ),
+            ),
+        )
+    if decomposition.uncertainty_type is DemandUncertaintyType.SPREAD_DECREASE:
+        return (
+            _bounded_candidate(
+                candidate_id="agentic_spread_relaxation",
+                diagnosis=diagnosis,
+                demand_outlook=decomposition.recommended_demand_outlook,
+                leadtime_outlook=diagnosis.latest_leadtime,
+                safety_buffer_scale=decomposition.recommended_safety_buffer_scale,
+                update_types=decomposition.recommended_update_types,
+                rationale=(
+                    "Lower-spread candidate relaxes uncertainty protection while "
+                    "keeping the demand outlook anchored."
+                ),
+            ),
+        )
+    return ()
+
+
+def _service_floor_demand_outlook(
+    decomposition: DemandUncertaintyDecompositionRecord,
+    *,
+    max_multiplier: float,
+) -> float:
+    severity_multiplier = 1.0 + min(
+        max_multiplier - 1.0,
+        0.025 * max(0.0, decomposition.spread_ratio - 1.0),
+    )
+    return decomposition.recommended_demand_outlook * severity_multiplier
+
+
+def _service_floor_safety_buffer_scale(
+    decomposition: DemandUncertaintyDecompositionRecord,
+    *,
+    additive: float,
+) -> float:
+    severity_additive = additive + min(
+        0.055,
+        0.025 * max(0.0, decomposition.spread_ratio - 1.0),
+    )
+    return min(
+        1.25,
+        max(
+            decomposition.recommended_safety_buffer_scale,
+            decomposition.recommended_safety_buffer_scale + severity_additive,
+        ),
+    )
+
+
+def _tail_cover_demand_outlook(
+    diagnosis: RegimeDiagnosisRecord,
+    decomposition: DemandUncertaintyDecompositionRecord,
+    *,
+    cap_multiplier: float,
+) -> float:
+    tail_cover = _upper_tail_mean(diagnosis.demand_window, 0.25)
+    cap = decomposition.recommended_demand_outlook * cap_multiplier
+    return max(
+        decomposition.recommended_demand_outlook,
+        min(tail_cover, cap),
+    )
 
 
 def _bounded_candidate(
@@ -1477,6 +2109,7 @@ def _expected_update_cost(
     return expected_cost + _uncertainty_quality_penalty(
         candidate,
         diagnosis,
+        None,
     )
 
 
@@ -1484,6 +2117,7 @@ def _risk_sensitive_candidate_score(
     *,
     candidate: ScenarioCandidateRecord,
     diagnosis: RegimeDiagnosisRecord,
+    decomposition: DemandUncertaintyDecompositionRecord | None,
     belief: RegimeBeliefRecord,
     system_state: SimulationState,
     benchmark_case: SerialBenchmarkCase,
@@ -1506,13 +2140,18 @@ def _risk_sensitive_candidate_score(
     tail_cost = _upper_tail_mean(path_costs, tail_fraction)
     service_risk = mean(unmet_loads) + 0.25 * mean(final_backorders)
     service_penalty = belief.service_risk_weight * service_risk
-    overreaction_penalty = _overreaction_penalty(candidate, diagnosis, belief)
+    overreaction_penalty = _overreaction_penalty(
+        candidate,
+        diagnosis,
+        decomposition,
+        belief,
+    )
     objective = (
         mean_cost
         + belief.tail_risk_weight * tail_cost
         + service_penalty
         + overreaction_penalty
-        + _uncertainty_quality_penalty(candidate, diagnosis)
+        + _uncertainty_quality_penalty(candidate, diagnosis, decomposition)
     )
     return PlannerCandidateScoreRecord(
         candidate_id=candidate.candidate_id,
@@ -1617,12 +2256,25 @@ def _upper_tail_mean(values: tuple[float, ...], tail_fraction: float) -> float:
 def _overreaction_penalty(
     candidate: ScenarioCandidateRecord,
     diagnosis: RegimeDiagnosisRecord,
+    decomposition: DemandUncertaintyDecompositionRecord | None,
     belief: RegimeBeliefRecord,
 ) -> float:
     if belief.overreaction_weight <= 0.0:
         return 0.0
     protected_demand = candidate.demand_outlook * candidate.safety_buffer_scale
-    demand_anchor = max(diagnosis.latest_demand, mean(diagnosis.demand_window), 1.0)
+    if (
+        decomposition is not None
+        and decomposition.uncertainty_type
+        in {
+            DemandUncertaintyType.STABLE,
+            DemandUncertaintyType.SPREAD_INCREASE,
+            DemandUncertaintyType.SPREAD_DECREASE,
+            DemandUncertaintyType.MIXED,
+        }
+    ):
+        demand_anchor = max(decomposition.recommended_demand_outlook, 1.0)
+    else:
+        demand_anchor = max(diagnosis.latest_demand, mean(diagnosis.demand_window), 1.0)
     leadtime_anchor = max(diagnosis.latest_leadtime, mean(diagnosis.leadtime_window), 1.0)
     demand_excess = max(0.0, protected_demand / demand_anchor - 1.0)
     leadtime_excess = max(0.0, candidate.leadtime_outlook / leadtime_anchor - 1.0)
@@ -1640,6 +2292,7 @@ def _overreaction_penalty(
 def _guarded_candidate_id(
     *,
     diagnosis: RegimeDiagnosisRecord,
+    decomposition: DemandUncertaintyDecompositionRecord | None,
     belief: RegimeBeliefRecord,
     evaluation: ScenarioPlannerEvaluationDiagnostics,
     time_index: int,
@@ -1648,6 +2301,59 @@ def _guarded_candidate_id(
 ) -> tuple[str, str]:
     selected_id = evaluation.selected_candidate_id
     selected_score = _score_by_id(evaluation, selected_id)
+
+    if (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.SPREAD_INCREASE
+    ):
+        spread_candidate = _best_spread_preserving_score(
+            evaluation,
+            decomposition=decomposition,
+        )
+        demand_cap = decomposition.recommended_demand_outlook * 1.15
+        selected_overstates_mean = selected_score.demand_outlook > demand_cap
+        if (
+            spread_candidate is not None
+            and selected_overstates_mean
+            and spread_candidate.expected_cost <= selected_score.expected_cost + 30.0
+        ):
+            return (
+                spread_candidate.candidate_id,
+                "spread_increase_prefers_mean_preserving_candidate_when_cost_close",
+            )
+        tail_cover_score = _optional_score_by_id(
+            evaluation,
+            "agentic_spread_tail_cover_guard",
+        )
+        if (
+            tail_cover_score is not None
+            and time_index >= 2
+            and selected_score.service_risk_penalty >= 12.0
+            and tail_cover_score.expected_cost <= selected_score.expected_cost + 70.0
+        ):
+            return (
+                "agentic_spread_tail_cover_guard",
+                "spread_increase_service_pressure_prefers_tail_cover_when_close",
+            )
+
+    if (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.MIXED
+    ):
+        tail_cover_score = _optional_score_by_id(
+            evaluation,
+            "agentic_mixed_tail_cover_guard",
+        )
+        if (
+            tail_cover_score is not None
+            and time_index >= 2
+            and selected_score.service_risk_penalty >= 35.0
+            and tail_cover_score.expected_cost <= selected_score.expected_cost + 90.0
+        ):
+            return (
+                "agentic_mixed_tail_cover_guard",
+                "mixed_service_pressure_prefers_tail_cover_when_close",
+            )
 
     if diagnosis.case_family in {"initial_demand_shift", "sustained_demand_shift"}:
         original_score = _optional_score_by_id(evaluation, "original_evidence_path")
@@ -1690,11 +2396,71 @@ def _guarded_candidate_id(
 def _uncertainty_quality_penalty(
     candidate: ScenarioCandidateRecord,
     diagnosis: RegimeDiagnosisRecord,
+    decomposition: DemandUncertaintyDecompositionRecord | None,
 ) -> float:
     """Penalize scenario inputs that contradict high-confidence regime evidence."""
 
     penalty = 0.0
-    if diagnosis.case_family in {
+    if (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.STABLE
+    ):
+        demand_anchor = max(decomposition.recommended_demand_outlook, 1.0)
+        protected_demand = candidate.demand_outlook * candidate.safety_buffer_scale
+        demand_excess = max(0.0, protected_demand / demand_anchor - 1.30)
+        penalty += 45.0 * demand_excess * demand_excess
+        if UpdateRequestType.SWITCH_DEMAND_REGIME in candidate.applied_update_types:
+            penalty += 5.0
+    elif (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.SPREAD_INCREASE
+    ):
+        demand_anchor = max(decomposition.recommended_demand_outlook, 1.0)
+        demand_excess = max(0.0, candidate.demand_outlook / demand_anchor - 1.12)
+        penalty += 80.0 * demand_excess * demand_excess
+        buffer_shortfall = max(
+            0.0,
+            decomposition.recommended_safety_buffer_scale
+            - candidate.safety_buffer_scale,
+        )
+        penalty += 35.0 * buffer_shortfall * buffer_shortfall
+        if UpdateRequestType.SWITCH_DEMAND_REGIME in candidate.applied_update_types:
+            penalty += 4.0
+    elif (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.MIXED
+    ):
+        demand_anchor = max(decomposition.recommended_demand_outlook, 1.0)
+        target_protection = (
+            demand_anchor * decomposition.recommended_safety_buffer_scale
+        )
+        protected_demand = candidate.demand_outlook * candidate.safety_buffer_scale
+        protection_shortfall = max(0.0, target_protection - protected_demand)
+        penalty += 16.0 * protection_shortfall * protection_shortfall
+        demand_excess = max(0.0, protected_demand / target_protection - 1.85)
+        penalty += 120.0 * demand_excess * demand_excess
+        if (
+            UpdateRequestType.WIDEN_UNCERTAINTY
+            not in candidate.applied_update_types
+            and candidate.safety_buffer_scale
+            < decomposition.recommended_safety_buffer_scale
+        ):
+            buffer_shortfall = (
+                decomposition.recommended_safety_buffer_scale
+                - candidate.safety_buffer_scale
+            )
+            penalty += 20.0 * buffer_shortfall * buffer_shortfall
+    elif (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.SPREAD_DECREASE
+    ):
+        demand_anchor = max(decomposition.recommended_demand_outlook, 1.0)
+        protected_demand = candidate.demand_outlook * candidate.safety_buffer_scale
+        demand_excess = max(0.0, protected_demand / demand_anchor - 1.18)
+        penalty += 55.0 * demand_excess * demand_excess
+        if UpdateRequestType.SWITCH_DEMAND_REGIME in candidate.applied_update_types:
+            penalty += 6.0
+    elif diagnosis.case_family in {
         "initial_demand_shift",
         "sustained_demand_shift",
         "joint_demand_leadtime_stress",
@@ -1760,6 +2526,7 @@ def _scenario_paths(
 def _belief_scenario_paths(
     *,
     diagnosis: RegimeDiagnosisRecord,
+    decomposition: DemandUncertaintyDecompositionRecord | None,
     belief: RegimeBeliefRecord,
     config: ScenarioRollingHorizonPolicyConfig,
     time_index: int,
@@ -1785,7 +2552,28 @@ def _belief_scenario_paths(
             for horizon_index in range(config.horizon_length):
                 demand_value = float(rng.choice(diagnosis.demand_window))
                 leadtime_value = max(1.0, float(rng.choice(diagnosis.leadtime_window)))
-                if entry.regime_label in {
+                spread_only = (
+                    decomposition is not None
+                    and decomposition.uncertainty_type
+                    is DemandUncertaintyType.SPREAD_INCREASE
+                )
+                if spread_only:
+                    if entry.regime_label is RegimeLabel.RECOVERY:
+                        demand_value = min(
+                            demand_value,
+                            decomposition.recommended_demand_outlook,
+                        )
+                    elif entry.regime_label in {
+                        RegimeLabel.DEMAND_REGIME_SHIFT,
+                        RegimeLabel.JOINT_DISRUPTION,
+                    }:
+                        demand_value = max(
+                            demand_value,
+                            decomposition.recommended_demand_outlook,
+                        )
+                    else:
+                        demand_value *= entry.demand_multiplier
+                elif entry.regime_label in {
                     RegimeLabel.DEMAND_REGIME_SHIFT,
                     RegimeLabel.JOINT_DISRUPTION,
                 }:
@@ -1839,12 +2627,38 @@ def _belief_scenario_counts(
     return tuple(counts)
 
 
+def _best_spread_preserving_score(
+    evaluation: ScenarioPlannerEvaluationDiagnostics,
+    *,
+    decomposition: DemandUncertaintyDecompositionRecord,
+) -> PlannerCandidateScoreRecord | None:
+    demand_cap = decomposition.recommended_demand_outlook * 1.15
+    eligible = tuple(
+        score
+        for score in evaluation.candidate_scores
+        if score.demand_outlook <= demand_cap and score.safety_buffer_scale >= 1.0
+    )
+    if not eligible:
+        return None
+    return min(eligible, key=lambda score: score.expected_cost)
+
+
 def _latest_diagnosis(invocation: ToolInvocation) -> RegimeDiagnosisRecord:
     for result in reversed(invocation.prior_results):
         value = result.structured_output.get("regime_diagnosis")
         if isinstance(value, RegimeDiagnosisRecord):
             return value
     raise ValueError("Scenario candidate generator requires a prior regime diagnosis.")
+
+
+def _latest_demand_uncertainty_decomposition(
+    invocation: ToolInvocation,
+) -> DemandUncertaintyDecompositionRecord | None:
+    for result in reversed(invocation.prior_results):
+        value = result.structured_output.get("demand_uncertainty_decomposition")
+        if isinstance(value, DemandUncertaintyDecompositionRecord):
+            return value
+    return None
 
 
 def _latest_regime_belief(invocation: ToolInvocation) -> RegimeBeliefRecord:
@@ -1943,6 +2757,9 @@ def _validate_invocation(invocation: ToolInvocation, *, tool_name: str) -> None:
 __all__ = [
     "CounterfactualRegretGuardRecord",
     "CounterfactualRegretGuardTool",
+    "DemandUncertaintyDecompositionRecord",
+    "DemandUncertaintyDecompositionTool",
+    "DemandUncertaintyType",
     "PlannerCandidateScoreRecord",
     "RegimeBeliefEntry",
     "RegimeBeliefRecord",

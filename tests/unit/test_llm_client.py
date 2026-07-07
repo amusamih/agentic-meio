@@ -20,6 +20,7 @@ from meio.contracts import RegimeLabel
 
 REGRET_GUARDED_TOOL_SEQUENCE = (
     "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
     "regime_belief_tool",
     "scenario_candidate_generator_tool",
     "risk_sensitive_scenario_evaluator_tool",
@@ -60,8 +61,15 @@ def test_fake_llm_client_returns_deterministic_json() -> None:
     assert payload["candidate_tool_ids"] == list(REGRET_GUARDED_TOOL_SEQUENCE)
 
 
-def test_fake_llm_client_requests_no_tools_when_current_sequence_is_unavailable() -> None:
+def test_fake_llm_client_requests_available_reduced_tool_sequence() -> None:
     request = build_request(RegimeLabel.DEMAND_REGIME_SHIFT)
+    reduced_sequence = (
+        "regime_diagnosis_tool",
+        "regime_belief_tool",
+        "scenario_candidate_generator_tool",
+        "risk_sensitive_scenario_evaluator_tool",
+        "counterfactual_regret_guard_tool",
+    )
     request = LLMCompletionRequest(
         model=request.model,
         messages=request.messages,
@@ -74,7 +82,7 @@ def test_fake_llm_client_requests_no_tools_when_current_sequence_is_unavailable(
             leadtime_value=request.context.leadtime_value,
             inventory_level=request.context.inventory_level,
             backorder_level=request.context.backorder_level,
-            available_tool_ids=("regime_diagnosis_tool",),
+            available_tool_ids=reduced_sequence,
             max_tool_steps=request.context.max_tool_steps,
         ),
     )
@@ -82,8 +90,8 @@ def test_fake_llm_client_requests_no_tools_when_current_sequence_is_unavailable(
     response = FakeLLMClient().complete(request)
     payload = json.loads(response.content)
 
-    assert payload["candidate_tool_ids"] == []
-    assert payload["selected_subgoal"] == "request_replan"
+    assert payload["candidate_tool_ids"] == list(reduced_sequence)
+    assert payload["selected_subgoal"] == "query_uncertainty"
 
 
 def test_openai_client_fails_clearly_without_credentials(monkeypatch: pytest.MonkeyPatch) -> None:

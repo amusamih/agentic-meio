@@ -35,7 +35,7 @@ def _write_temp_backtest_inputs(tmp_path: Path) -> Path:
         "SKU\nSKU1\nSKU2\nSKU3\nSKU4\nSKU5\n",
         encoding="utf-8",
     )
-    config_path = tmp_path / "real_demand_backtest.toml"
+    config_path = tmp_path / "real_demand_backtest_realistic_comparison.toml"
     config_path.write_text(
         "\n".join(
             (
@@ -95,7 +95,7 @@ def _write_temp_backtest_panel_inputs(tmp_path: Path) -> Path:
         "SKU\nSKU1\nSKU2\nSKU3\nSKU4\nSKU5\nSKU6\n",
         encoding="utf-8",
     )
-    config_path = tmp_path / "real_demand_backtest_panel.toml"
+    config_path = tmp_path / "real_demand_backtest_panel_realistic_comparison.toml"
     config_path.write_text(
         "\n".join(
             (
@@ -194,6 +194,7 @@ def test_run_real_demand_backtest_supports_latest_guarded_agentic_mode() -> None
         assert run.llm_call_trace_records
         assert {
             "regime_diagnosis_tool",
+            "demand_uncertainty_decomposition_tool",
             "regime_belief_tool",
             "scenario_candidate_generator_tool",
             "risk_sensitive_scenario_evaluator_tool",

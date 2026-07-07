@@ -8,6 +8,8 @@ from uuid import uuid4
 from scripts.run_stockpyl_serial import (
     OFFICIAL_COMPARISON_MODES,
     REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
+    _build_mission,
+    _candidate_tool_ids_for_mode,
     run_stockpyl_serial,
     run_stockpyl_serial_batch,
     run_stockpyl_serial_mode_sweep,
@@ -16,6 +18,7 @@ from scripts.run_stockpyl_serial import (
 
 
 CONFIG_PATH = Path("configs/experiment/stockpyl_serial_realistic_comparison.toml")
+SPREAD_CONFIG_PATH = Path("configs/experiment/stockpyl_serial_spread_sensitivity.toml")
 
 
 def _batch_by_mode(mode_sweep, mode: str):
@@ -37,6 +40,45 @@ def test_run_stockpyl_serial_supports_current_agentic_mode_with_fake_client() ->
         trace.tool_id == "counterfactual_regret_guard_tool"
         for trace in benchmark_run.tool_call_trace_records
     )
+
+
+def test_agentic_tool_ablation_variants_resolve_coherent_sequences() -> None:
+    assert _candidate_tool_ids_for_mode("full") == (
+        "regime_diagnosis_tool",
+        "demand_uncertainty_decomposition_tool",
+        "regime_belief_tool",
+        "scenario_candidate_generator_tool",
+        "risk_sensitive_scenario_evaluator_tool",
+        "counterfactual_regret_guard_tool",
+    )
+    assert _candidate_tool_ids_for_mode("without_demand_decomposition") == (
+        "regime_diagnosis_tool",
+        "regime_belief_tool",
+        "scenario_candidate_generator_tool",
+        "risk_sensitive_scenario_evaluator_tool",
+        "counterfactual_regret_guard_tool",
+    )
+    assert _candidate_tool_ids_for_mode("without_risk_sensitive_evaluation") == (
+        "regime_diagnosis_tool",
+        "demand_uncertainty_decomposition_tool",
+        "regime_belief_tool",
+        "scenario_candidate_generator_tool",
+        "scenario_evaluator_tool",
+    )
+    assert _candidate_tool_ids_for_mode("without_regret_guard") == (
+        "regime_diagnosis_tool",
+        "demand_uncertainty_decomposition_tool",
+        "regime_belief_tool",
+        "scenario_candidate_generator_tool",
+        "risk_sensitive_scenario_evaluator_tool",
+    )
+
+
+def test_agentic_tool_ablation_mission_budget_matches_explicit_sequence() -> None:
+    mission = _build_mission("without_risk_sensitive_evaluation")
+
+    assert mission.admissible_tool_ids[-1] == "scenario_evaluator_tool"
+    assert mission.max_tool_steps == len(mission.admissible_tool_ids)
 
 
 def test_non_llm_uncertainty_baselines_do_not_emit_llm_call_traces() -> None:
@@ -65,6 +107,32 @@ def test_run_stockpyl_serial_mode_sweep_uses_official_mode_set() -> None:
         ).runs[0].llm_call_trace_records
         != ()
     )
+
+
+def test_spread_sensitivity_profile_preserves_seed_aggregate_mean() -> None:
+    batch = run_stockpyl_serial_batch(
+        SPREAD_CONFIG_PATH,
+        mode="deterministic_baseline",
+        max_runs=3,
+    )
+    realized_demands = tuple(
+        record.realized_demand
+        for run in batch.runs
+        for record in run.trace.period_records
+        if record.realized_demand is not None
+    )
+    elevated_spread_demands = tuple(
+        record.realized_demand
+        for run in batch.runs
+        for record in run.trace.period_records
+        if record.regime_label.value == "demand_regime_shift"
+        and record.realized_demand is not None
+    )
+
+    assert len(batch.runs) == 3
+    assert {run.schedule_name for run in batch.runs} == {"spread_recovery"}
+    assert sum(realized_demands) / len(realized_demands) == 10.0
+    assert sorted(elevated_spread_demands) == [2.0, 10.0, 18.0]
 
 
 def test_write_stockpyl_serial_artifacts_writes_current_manifest() -> None:

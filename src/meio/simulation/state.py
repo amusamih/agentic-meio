@@ -1,4 +1,4 @@
-"""Typed simulation state containers for the first serial benchmark path."""
+"""Typed simulation state containers for the serial benchmark path."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def _coerce_nested_series(
 
 @dataclass(frozen=True, slots=True)
 class SimulationState:
-    """Compact simulation state for the first serial benchmark path."""
+    """Compact simulation state for the serial benchmark path."""
 
     benchmark_id: str
     time_index: int

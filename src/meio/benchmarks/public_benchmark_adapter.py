@@ -26,6 +26,9 @@ from meio.agents.runtime import (
 )
 from meio.agents.scenario_planner import (
     CounterfactualRegretGuardTool,
+    DemandUncertaintyDecompositionRecord,
+    DemandUncertaintyDecompositionTool,
+    DemandUncertaintyType,
     PlannerCandidateScoreRecord,
     RegimeBeliefTool,
     RegimeDiagnosisTool,
@@ -94,6 +97,7 @@ REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE = (
 )
 REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS = (
     "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
     "regime_belief_tool",
     "scenario_candidate_generator_tool",
     "risk_sensitive_scenario_evaluator_tool",
@@ -421,9 +425,11 @@ class PublicBenchmarkScenarioCandidateGeneratorTool(BoundedTool):
     def invoke(self, invocation: ToolInvocation) -> ToolResult:
         if invocation.observation is None or invocation.evidence is None:
             raise ValueError("Public benchmark candidate generation requires observation/evidence.")
+        decomposition = _latest_public_demand_uncertainty_decomposition(invocation)
         candidate_set = _build_public_scenario_candidate_set(
             observation=invocation.observation,
             evidence=invocation.evidence,
+            decomposition=decomposition,
             robust_config=self.robust_config,
         )
         return ToolResult(
@@ -522,6 +528,7 @@ def _build_public_scenario_candidate_set(
     *,
     observation: Observation,
     evidence: RuntimeEvidence,
+    decomposition: DemandUncertaintyDecompositionRecord | None,
     robust_config: RobustPolicyConfig,
 ) -> ScenarioCandidateSet:
     demand_window = tuple(float(value) for value in observation.demand_evidence.history)
@@ -555,7 +562,7 @@ def _build_public_scenario_candidate_set(
     shift_leadtime = max(latest_leadtime, robust_leadtime, leadtime_baseline)
     recovery_demand = max(0.0, min(demand_mean, demand_baseline * 1.05))
     recovery_leadtime = max(1.0, min(leadtime_mean, leadtime_baseline * 1.05))
-    candidates = (
+    candidates = [
         ScenarioCandidateRecord(
             candidate_id="keep_current",
             provenance="public_benchmark_candidate_generator",
@@ -619,9 +626,28 @@ def _build_public_scenario_candidate_set(
             request_replan=True,
             rationale="Relaxed candidate for recovery or false-alarm conditions.",
         ),
-    )
+    ]
+    if (
+        decomposition is not None
+        and decomposition.uncertainty_type is DemandUncertaintyType.SPREAD_INCREASE
+    ):
+        candidates.append(
+            ScenarioCandidateRecord(
+                candidate_id="agentic_mean_preserving_spread_guard",
+                provenance="public_benchmark_candidate_generator",
+                demand_outlook=decomposition.recommended_demand_outlook,
+                leadtime_outlook=latest_leadtime,
+                safety_buffer_scale=decomposition.recommended_safety_buffer_scale,
+                applied_update_types=decomposition.recommended_update_types,
+                request_replan=True,
+                rationale=(
+                    "Mean-preserving spread candidate for benchmark-native "
+                    "scenario input evaluation."
+                ),
+            )
+        )
     return ScenarioCandidateSet(
-        candidates=candidates,
+        candidates=tuple(candidates),
         incumbent_candidate_id="rolling_horizon_incumbent",
         generator_notes=(
             "candidate_set_shared_by_public_rolling_horizon_and_agentic_ai",
@@ -636,6 +662,16 @@ def _latest_public_candidate_set(invocation: ToolInvocation) -> ScenarioCandidat
         if isinstance(value, ScenarioCandidateSet):
             return value
     raise ValueError("scenario_candidate_set is required before candidate evaluation.")
+
+
+def _latest_public_demand_uncertainty_decomposition(
+    invocation: ToolInvocation,
+) -> DemandUncertaintyDecompositionRecord | None:
+    for result in reversed(invocation.prior_results):
+        value = result.structured_output.get("demand_uncertainty_decomposition")
+        if isinstance(value, DemandUncertaintyDecompositionRecord):
+            return value
+    return None
 
 
 def _candidate_by_id(
@@ -1293,6 +1329,7 @@ def _run_public_benchmark_mode(
                 candidate_set = _build_public_scenario_candidate_set(
                     observation=observation,
                     evidence=evidence,
+                    decomposition=None,
                     robust_config=config.uncertainty_baselines.robust_policy,
                 )
                 robust_candidate = _candidate_by_id(
@@ -1317,6 +1354,7 @@ def _run_public_benchmark_mode(
                 candidate_set = _build_public_scenario_candidate_set(
                     observation=observation,
                     evidence=evidence,
+                    decomposition=None,
                     robust_config=config.uncertainty_baselines.robust_policy,
                 )
                 native_scores, evaluation = _evaluate_public_candidate_set(
@@ -1815,7 +1853,7 @@ def _build_public_benchmark_mission(
     mode: str = REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE,
 ) -> MissionSpec:
     return MissionSpec(
-        mission_id="public_benchmark_eval",
+        mission_id="public_benchmark_portability",
         objective=(
             "Inspect bounded benchmark evidence, manage uncertainty conservatively, "
             "and keep replenishment orders inside the trusted optimizer boundary."
@@ -1835,6 +1873,7 @@ def _build_runtime(
 
     regret_guarded_tools = (
         RegimeDiagnosisTool(),
+        DemandUncertaintyDecompositionTool(),
         RegimeBeliefTool(),
         PublicBenchmarkScenarioCandidateGeneratorTool(
             robust_config=config.uncertainty_baselines.robust_policy,

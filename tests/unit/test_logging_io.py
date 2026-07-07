@@ -139,6 +139,7 @@ def test_logging_io_writes_json_and_jsonl_artifacts() -> None:
             fallback_reason=None,
             requested_tool_ids=(
                 "regime_diagnosis_tool",
+                "demand_uncertainty_decomposition_tool",
                 "regime_belief_tool",
                 "scenario_candidate_generator_tool",
                 "risk_sensitive_scenario_evaluator_tool",

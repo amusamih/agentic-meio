@@ -12,6 +12,7 @@ from meio.agents.prompts import PROMPT_VERSION, prompt_contract_hash
 from meio.agents.runtime import OrchestrationResponse, OrchestrationRuntime, RuntimeMode
 from meio.agents.scenario_planner import (
     CounterfactualRegretGuardTool,
+    DemandUncertaintyDecompositionTool,
     RegimeBeliefTool,
     RegimeDiagnosisTool,
     RiskSensitiveScenarioEvaluatorTool,
@@ -111,6 +112,7 @@ REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_ORCHESTRATOR_MODE = (
 )
 REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_IDS = (
     "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
     "regime_belief_tool",
     "scenario_candidate_generator_tool",
     "risk_sensitive_scenario_evaluator_tool",
@@ -206,7 +208,7 @@ def infer_real_series_regime(
 
 
 def run_real_demand_backtest_batch(
-    config_path: str | Path = "configs/experiment/real_demand_backtest.toml",
+    config_path: str | Path,
     *,
     mode: str = "all",
     llm_client_mode_override: str | None = None,
@@ -314,7 +316,7 @@ def _run_real_demand_backtest_batch_from_config(
 
 
 def write_demand_backtest_artifacts(
-    config_path: str | Path = "configs/experiment/real_demand_backtest.toml",
+    config_path: str | Path,
     *,
     mode: str = "all",
     llm_client_mode_override: str | None = None,
@@ -380,7 +382,9 @@ def _write_demand_backtest_batch_artifacts(
 
 
 def write_demand_backtest_panel_artifacts(
-    config_path: str | Path = "configs/experiment/real_demand_backtest_panel.toml",
+    config_path: str | Path = (
+        "configs/experiment/real_demand_backtest_panel_realistic_comparison.toml"
+    ),
     *,
     mode: str = "all",
     llm_client_mode_override: str | None = None,
@@ -917,6 +921,7 @@ def _build_runtime(
 ) -> tuple[OrchestrationRuntime, str | None]:
     regret_guarded_risk_sensitive_scenario_planner_tools = (
         RegimeDiagnosisTool(),
+        DemandUncertaintyDecompositionTool(),
         RegimeBeliefTool(),
         ScenarioCandidateGeneratorTool(
             benchmark_case=benchmark_case,

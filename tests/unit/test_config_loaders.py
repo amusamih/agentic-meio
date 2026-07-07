@@ -10,7 +10,6 @@ from meio.config.loaders import (
     load_benchmark_config,
     load_experiment_config,
     load_public_benchmark_eval_config,
-    load_real_demand_backtest_config,
     load_real_demand_backtest_panel_config,
 )
 from meio.contracts import BackorderPolicy, BenchmarkFamily, RegimeLabel, ToolClass, UpdateRequestType
@@ -28,7 +27,9 @@ OFFICIAL_MODES = (
 def test_load_valid_example_configs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MEIO_LLM_ORCHESTRATOR_MODEL", "gpt-4o-mini")
     benchmark_config = load_benchmark_config(REPO_ROOT / "configs/benchmark/serial_3_echelon.toml")
-    experiment_config = load_experiment_config(REPO_ROOT / "configs/experiment/first_milestone.toml")
+    experiment_config = load_experiment_config(
+        REPO_ROOT / "configs/experiment/stockpyl_serial_realistic_comparison.toml"
+    )
     agent_config = load_agent_config(REPO_ROOT / "configs/agent/base.toml")
 
     assert benchmark_config.benchmark_family is BenchmarkFamily.SERIAL
@@ -37,7 +38,7 @@ def test_load_valid_example_configs(monkeypatch: pytest.MonkeyPatch) -> None:
     assert benchmark_config.demand_mean == 10.0
     assert benchmark_config.system.stages[0].shipment_lead_time == 2
     assert benchmark_config.system.stages[0].base_stock_level == 20
-    assert experiment_config.episode_count == 5
+    assert experiment_config.episode_count == 3
     assert RegimeLabel.NORMAL in agent_config.enabled_regime_labels
     assert RegimeLabel.JOINT_DISRUPTION in agent_config.enabled_regime_labels
     assert ToolClass.LLM_BACKED in agent_config.allowed_tool_classes
@@ -52,106 +53,20 @@ def test_load_valid_example_configs(monkeypatch: pytest.MonkeyPatch) -> None:
     assert agent_config.llm_max_retries == 1
 
 
-def test_load_stockpyl_serial_experiment_config_reads_rollout_schedule() -> None:
-    experiment_config = load_experiment_config(REPO_ROOT / "configs/experiment/stockpyl_serial.toml")
-
-    assert experiment_config.rollout_horizon == 3
-    assert experiment_config.regime_schedule == (
-        RegimeLabel.NORMAL,
-        RegimeLabel.DEMAND_REGIME_SHIFT,
-        RegimeLabel.RECOVERY,
-    )
-
-
 def test_load_live_llm_configs_reads_real_client_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MEIO_LLM_ORCHESTRATOR_MODEL", "gpt-5.4-mini")
     experiment_config = load_experiment_config(
-        REPO_ROOT / "configs/experiment/stockpyl_serial_live_llm.toml"
+        REPO_ROOT / "configs/experiment/stockpyl_serial_realistic_comparison.toml"
     )
     agent_config = load_agent_config(REPO_ROOT / "configs/agent/live_llm.toml")
 
-    assert experiment_config.episode_count == 2
+    assert experiment_config.episode_count == 3
     assert agent_config.llm_provider == "openai"
     assert agent_config.llm_client_mode == "real"
     assert agent_config.llm_model_name == "gpt-5.4-mini"
     assert agent_config.llm_temperature == 0.0
     assert agent_config.llm_request_timeout_s == 20.0
     assert agent_config.llm_max_retries == 1
-
-
-def test_load_multi_schedule_experiment_config_reads_schedule_and_seed_sets() -> None:
-    experiment_config = load_experiment_config(
-        REPO_ROOT / "configs/experiment/stockpyl_serial_multi_eval.toml"
-    )
-
-    assert experiment_config.rollout_horizon is None
-    assert experiment_config.seed_set == (20260417, 20260418)
-    assert tuple(schedule.name for schedule in experiment_config.regime_schedules) == (
-        "shift_recovery",
-        "sustained_shift",
-        "recovery_false_alarm",
-        "long_shift_recovery",
-    )
-    assert experiment_config.resolved_schedule_set()[-1].labels[-1] is RegimeLabel.RECOVERY
-
-
-def test_load_paper_candidate_experiment_config_preserves_full_tool_main_path() -> None:
-    experiment_config = load_experiment_config(
-        REPO_ROOT / "configs/experiment/stockpyl_serial_paper_candidate.toml"
-    )
-
-    assert experiment_config.mode_set == OFFICIAL_MODES
-    assert experiment_config.tool_ablation_variants == ("full",)
-    assert experiment_config.seed_set == (20260417, 20260418)
-    assert tuple(schedule.name for schedule in experiment_config.regime_schedules) == (
-        "shift_recovery",
-        "sustained_shift",
-        "recovery_false_alarm",
-        "long_shift_recovery",
-    )
-    assert experiment_config.results_dir == Path("results/stockpyl_serial_paper_candidate")
-
-
-def test_load_heldout_experiment_config_preserves_frozen_full_tool_main_path() -> None:
-    experiment_config = load_experiment_config(
-        REPO_ROOT / "configs/experiment/stockpyl_serial_heldout_eval.toml"
-    )
-
-    assert experiment_config.mode_set == OFFICIAL_MODES
-    assert experiment_config.tool_ablation_variants == ("full",)
-    assert experiment_config.seed_set == (20260417, 20260418)
-    assert tuple(schedule.name for schedule in experiment_config.regime_schedules) == (
-        "delayed_shift_recovery",
-        "delayed_sustained_shift",
-        "double_shift_with_gap",
-        "recovery_then_relapse",
-        "false_alarm_then_real_shift",
-    )
-    assert experiment_config.results_dir == Path("results/stockpyl_serial_heldout_eval")
-
-
-def test_load_frozen_broad_eval_experiment_config_preserves_frozen_full_tool_path() -> None:
-    experiment_config = load_experiment_config(
-        REPO_ROOT / "configs/experiment/stockpyl_serial_frozen_broad_eval.toml"
-    )
-
-    assert experiment_config.mode_set == OFFICIAL_MODES
-    assert experiment_config.tool_ablation_variants == ("full",)
-    assert experiment_config.seed_set == (20260417, 20260418, 20260419)
-    assert tuple(schedule.name for schedule in experiment_config.regime_schedules) == (
-        "shift_recovery",
-        "sustained_shift",
-        "recovery_false_alarm",
-        "long_shift_recovery",
-        "delayed_shift_recovery",
-        "delayed_sustained_shift",
-        "false_alarm_then_real_shift",
-        "double_shift_with_gap",
-        "recovery_then_relapse",
-        "delayed_long_shift_recovery",
-        "false_alarm_then_shift_recovery",
-    )
-    assert experiment_config.results_dir == Path("results/stockpyl_serial_frozen_broad_eval")
 
 
 def test_load_realistic_comparison_config_limits_modes_to_paper_comparison() -> None:
@@ -165,26 +80,54 @@ def test_load_realistic_comparison_config_limits_modes_to_paper_comparison() -> 
     assert experiment_config.results_dir == Path("results/stockpyl_serial_realistic_comparison")
 
 
-def test_load_public_benchmark_eval_config_reads_replenishmentenv_defaults() -> None:
-    config = load_public_benchmark_eval_config(
-        REPO_ROOT / "configs/experiment/public_benchmark_eval.toml"
+def test_load_spread_sensitivity_config_reads_mean_preserving_profile() -> None:
+    experiment_config = load_experiment_config(
+        REPO_ROOT / "configs/experiment/stockpyl_serial_spread_sensitivity.toml"
     )
 
-    assert config.experiment_name == "public_benchmark_eval"
-    assert config.benchmark_candidate == "replenishment_env"
-    assert config.discovery_module == "ReplenishmentEnv"
-    assert config.benchmark_root == Path("third_party/ReplenishmentEnv")
-    assert config.demo_config_path == Path("config/demo.yml")
-    assert config.agent_config_path == Path("configs/agent/base.toml")
-    assert config.environment_config_name == "sku50.single_store.standard"
-    assert config.wrapper_names == ("HistoryWrapper",)
-    assert config.benchmark_mode == "test"
-    assert config.smoke_horizon_steps == 1
-    assert config.mode_set == OFFICIAL_MODES
-    assert config.episode_horizon_steps == 10
-    assert config.base_stock_multiplier == 1.0
-    assert config.demand_scale_epsilon == 1e-6
-    assert config.uncertainty_baselines.scenario_rolling_horizon_policy.horizon_length == 3
+    assert experiment_config.mode_set == OFFICIAL_MODES
+    assert experiment_config.seed_set == (20260417, 20260418, 20260419)
+    assert len(experiment_config.regime_schedules) == 11
+    assert experiment_config.controlled_demand_profile is not None
+    assert experiment_config.controlled_demand_profile.profile_type == "mean_preserving_spread"
+    assert experiment_config.controlled_demand_profile.target_mean == 10.0
+    assert experiment_config.controlled_demand_profile.values_for(RegimeLabel.NORMAL) == (
+        7.0,
+        10.0,
+        13.0,
+    )
+    assert experiment_config.controlled_demand_profile.values_for(
+        RegimeLabel.DEMAND_REGIME_SHIFT
+    ) == (2.0, 10.0, 18.0)
+    assert experiment_config.results_dir == Path("results/stockpyl_serial_spread_sensitivity")
+
+
+def test_load_component_ablation_configs_read_tool_variants() -> None:
+    demand_level_config = load_experiment_config(
+        REPO_ROOT / "configs/experiment/stockpyl_serial_component_ablation.toml"
+    )
+    spread_config = load_experiment_config(
+        REPO_ROOT / "configs/experiment/stockpyl_serial_spread_component_ablation.toml"
+    )
+
+    expected_variants = (
+        "full",
+        "without_demand_decomposition",
+        "without_risk_sensitive_evaluation",
+        "without_regret_guard",
+    )
+    assert demand_level_config.mode_set == (
+        "llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
+    )
+    assert demand_level_config.tool_ablation_variants == expected_variants
+    assert spread_config.tool_ablation_variants == expected_variants
+    assert spread_config.controlled_demand_profile is not None
+    assert demand_level_config.results_dir == Path(
+        "results/stockpyl_serial_component_ablation"
+    )
+    assert spread_config.results_dir == Path(
+        "results/stockpyl_serial_spread_component_ablation"
+    )
 
 
 def test_load_public_benchmark_realistic_comparison_config_reads_latest_modes() -> None:
@@ -198,43 +141,6 @@ def test_load_public_benchmark_realistic_comparison_config_reads_latest_modes() 
     assert config.uncertainty_baselines.robust_policy.window_length == 14
     assert config.uncertainty_baselines.scenario_rolling_horizon_policy.scenario_count == 8
     assert config.results_dir == Path("results/public_benchmark_realistic_comparison")
-
-
-def test_load_real_demand_backtest_config_reads_bounded_public_data_settings() -> None:
-    config = load_real_demand_backtest_config(
-        REPO_ROOT / "configs/experiment/real_demand_backtest.toml"
-    )
-
-    assert config.dataset_name == "replenishmentenv_sku2778_store2"
-    assert config.selected_sku_count == 5
-    assert config.subset_selection == "nearest_benchmark_mean"
-    assert config.training_window_days == 180
-    assert config.evaluation_horizon_days == 30
-    assert config.mode_set == OFFICIAL_MODES
-    assert config.uncertainty_baselines.robust_policy.window_length == 14
-
-
-def test_load_real_demand_backtest_panel_config_reads_explicit_slice_panel() -> None:
-    config = load_real_demand_backtest_panel_config(
-        REPO_ROOT / "configs/experiment/real_demand_backtest_panel.toml"
-    )
-
-    assert config.experiment_name == "real_demand_backtest_panel"
-    assert config.mode_set == OFFICIAL_MODES
-    assert config.uncertainty_baselines.scenario_rolling_horizon_policy.scenario_count == 8
-    assert tuple(slice_config.name for slice_config in config.slices) == (
-        "store1_low_2018q4",
-        "store2_mid_2019q1",
-        "store3_midhigh_2019q2",
-    )
-    assert config.slices[0].selected_skus == (
-        "SKU48",
-        "SKU44",
-        "SKU15",
-        "SKU59",
-        "SKU42",
-    )
-    assert config.slices[1].evaluation_start_date == "2019/2/26"
 
 
 def test_load_real_demand_realistic_comparison_panel_config_reads_latest_modes() -> None:

@@ -24,7 +24,7 @@ from meio.simulation.state import SimulationState
 pytestmark = pytest.mark.skipif(find_spec("stockpyl") is None, reason="stockpyl not installed")
 
 
-def test_validate_serial_benchmark_config_accepts_first_milestone_case() -> None:
+def test_validate_serial_benchmark_config_accepts_serial_case() -> None:
     config = BenchmarkConfig(
         benchmark_family=BenchmarkFamily.SERIAL,
         system=SerialSystemConfig(
@@ -53,7 +53,7 @@ def test_build_serial_benchmark_case_uses_default_three_echelon_boundary() -> No
     assert case.benchmark_config.echelon_count == DEFAULT_SERIAL_ECHELON_COUNT
     assert case.stage_names == ("stage_1", "stage_2", "stage_3")
     assert case.adapter_name == "stockpyl_serial"
-    assert "Stockpyl-backed" in case.milestone_notes
+    assert "Stockpyl-backed" in case.implementation_notes
 
 
 def test_build_serial_orchestration_request_exposes_stockpyl_backed_state_and_evidence() -> None:

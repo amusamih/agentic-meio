@@ -86,12 +86,12 @@ def test_run_public_benchmark_eval_script_writes_inspection_payload(
             json.dumps({"env": {"mode": [{"name": "train"}]}, "warehouse": []}),
             encoding="utf-8",
         )
-        config_path = tmp_path / "public_benchmark_eval.toml"
+        config_path = tmp_path / "public_benchmark_realistic_comparison.toml"
         config_path.write_text(
             "\n".join(
                 (
                     "[experiment]",
-                    'name = "temp_public_benchmark_eval"',
+                    'name = "temp_public_benchmark_realistic_comparison"',
                     'benchmark_candidate = "replenishment_env"',
                     'discovery_module = "missing_replenishmentenv_module"',
                     f'benchmark_root = "{tmp_path.as_posix()}"',
@@ -239,6 +239,7 @@ def test_public_benchmark_execution_supports_native_latest_agentic_mode() -> Non
     assert artifact.mode_summary.step_count == 1
     assert {
         "regime_diagnosis_tool",
+        "demand_uncertainty_decomposition_tool",
         "regime_belief_tool",
         "scenario_candidate_generator_tool",
         "risk_sensitive_scenario_evaluator_tool",

@@ -19,6 +19,7 @@ from meio.simulation.state import Observation, SimulationState
 
 CURRENT_TOOL_IDS = (
     "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
     "regime_belief_tool",
     "scenario_candidate_generator_tool",
     "risk_sensitive_scenario_evaluator_tool",

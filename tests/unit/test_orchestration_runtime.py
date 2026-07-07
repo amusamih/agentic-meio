@@ -33,6 +33,7 @@ from meio.simulation.state import Observation, SimulationState
 
 CURRENT_TOOL_IDS = (
     "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
     "regime_belief_tool",
     "scenario_candidate_generator_tool",
     "risk_sensitive_scenario_evaluator_tool",
@@ -686,7 +687,7 @@ def test_runtime_supports_llm_orchestration_with_fake_client() -> None:
     assert response.step_telemetry.total_tokens == 144
     assert response.signal.tool_sequence == CURRENT_TOOL_IDS
     assert response.signal.request_replan is True
-    assert len(response.tool_call_traces) == 5
+    assert len(response.tool_call_traces) == 6
 
 
 def test_runtime_falls_back_safely_on_invalid_llm_output() -> None:

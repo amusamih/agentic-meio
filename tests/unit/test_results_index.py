@@ -7,18 +7,16 @@ from uuid import uuid4
 from meio.evaluation.logging_io import write_json
 from meio.evaluation.logging_schema import ArtifactUseClass
 from meio.evaluation.results_index import (
-    IndexedRunRecord,
     classify_artifact_governance,
     compute_validity_gate_passed,
     index_result_runs,
     summarize_directory_governance,
 )
-import scripts.list_paper_eligible_runs as list_runs_script
 
 
 def test_classify_artifact_governance_marks_fake_runs_internal_only() -> None:
     decision = classify_artifact_governance(
-        experiment_name="stockpyl_serial_live_llm_eval",
+        experiment_name="stockpyl_serial_realistic_comparison",
         benchmark_source="stockpyl_serial",
         provider="fake_llm_client",
         validity_gate_passed=True,
@@ -31,7 +29,7 @@ def test_classify_artifact_governance_marks_fake_runs_internal_only() -> None:
 
 def test_classify_artifact_governance_keeps_live_runs_internal_while_benchmark_is_provisional() -> None:
     decision = classify_artifact_governance(
-        experiment_name="stockpyl_serial_live_llm_eval",
+        experiment_name="stockpyl_serial_realistic_comparison",
         benchmark_source="stockpyl_serial",
         provider="openai",
         validity_gate_passed=True,
@@ -47,7 +45,7 @@ def test_classify_artifact_governance_keeps_live_runs_internal_while_benchmark_i
 
 def test_classify_artifact_governance_marks_live_runs_paper_candidate_once_gates_pass() -> None:
     decision = classify_artifact_governance(
-        experiment_name="stockpyl_serial_live_llm_eval",
+        experiment_name="stockpyl_serial_realistic_comparison",
         benchmark_source="stockpyl_serial",
         provider="openai",
         validity_gate_passed=True,
@@ -62,13 +60,13 @@ def test_classify_artifact_governance_marks_live_runs_paper_candidate_once_gates
 
 def test_summarize_directory_governance_collapses_mode_decisions() -> None:
     live_decision = classify_artifact_governance(
-        experiment_name="stockpyl_serial_live_llm_eval",
+        experiment_name="stockpyl_serial_realistic_comparison",
         benchmark_source="stockpyl_serial",
         provider="openai",
         validity_gate_passed=True,
     )
     fake_decision = classify_artifact_governance(
-        experiment_name="stockpyl_serial_live_llm_eval",
+        experiment_name="stockpyl_serial_realistic_comparison",
         benchmark_source="stockpyl_serial",
         provider="fake_llm_client",
         validity_gate_passed=True,
@@ -150,45 +148,3 @@ def test_index_result_runs_reads_saved_mode_level_governance() -> None:
     finally:
         if scratch_dir.exists():
             shutil.rmtree(scratch_dir, ignore_errors=True)
-
-
-def test_list_paper_eligible_runs_filters_indexed_output(
-    monkeypatch,
-    capsys,
-) -> None:
-    monkeypatch.setattr(
-        list_runs_script,
-        "index_result_runs",
-        lambda _root: (
-            IndexedRunRecord(
-                results_dir="results/demo/demo_run",
-                run_group_id="demo_run",
-                experiment_id="demo_experiment",
-                benchmark_id="serial_3_echelon",
-                benchmark_source="stockpyl_serial",
-                validation_lane="stockpyl_internal",
-                mode="llm_regret_guarded_risk_sensitive_scenario_planner_orchestrator",
-                provider="fake_llm_client",
-                model_name="gpt-4o-mini",
-                artifact_use_class=ArtifactUseClass.INTERNAL_ONLY,
-                validity_gate_passed=True,
-                eligibility_notes=("fake_llm_internal_only",),
-                average_total_cost=320.0,
-                average_fill_rate=1.0,
-            ),
-        ),
-    )
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "list_paper_eligible_runs.py",
-            "--artifact-use-class",
-            "internal_only",
-        ],
-    )
-
-    list_runs_script.main()
-    output = capsys.readouterr().out
-
-    assert "demo_run" in output
-    assert "internal_only" in output

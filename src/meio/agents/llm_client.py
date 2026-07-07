@@ -278,16 +278,23 @@ class FakeLLMClient:
 
 def _fake_payload_for_context(context: LLMClientContext) -> dict[str, object]:
     payload = dict(_FAKE_RESPONSES[context.regime_label])
-    regret_guarded_sequence = (
+    scenario_planning_tool_order = (
         "regime_diagnosis_tool",
+        "demand_uncertainty_decomposition_tool",
         "regime_belief_tool",
         "scenario_candidate_generator_tool",
         "risk_sensitive_scenario_evaluator_tool",
+        "scenario_evaluator_tool",
         "counterfactual_regret_guard_tool",
     )
-    if all(tool_id in context.available_tool_ids for tool_id in regret_guarded_sequence):
+    selected_tool_ids = [
+        tool_id
+        for tool_id in scenario_planning_tool_order
+        if tool_id in context.available_tool_ids
+    ]
+    if selected_tool_ids:
         payload["candidate_tool_ids"] = [
-            *regret_guarded_sequence,
+            *selected_tool_ids,
         ]
         payload["selected_subgoal"] = "query_uncertainty"
         payload["request_replan"] = context.regime_label is not RegimeLabel.NORMAL
@@ -296,10 +303,8 @@ def _fake_payload_for_context(context: LLMClientContext) -> dict[str, object]:
         if context.regime_label is RegimeLabel.RECOVERY:
             payload["update_request_types"] = ["reweight_scenarios"]
         payload["rationale"] = (
-            "Regret-guarded risk-sensitive fake response asks for explicit "
-            "regime diagnosis, bounded regime-belief formation, candidate "
-            "generation, risk-sensitive evaluation, and a final counterfactual "
-            "regret guard before protected downstream handoff."
+            "Fake response asks for the available bounded scenario-planning "
+            "sequence before protected downstream handoff."
         )
         return payload
     payload["candidate_tool_ids"] = []

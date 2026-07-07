@@ -290,9 +290,12 @@ class LLMOrchestrator:
             inventory_level=orchestration_input.system_state.inventory_level,
             backorder_level=orchestration_input.system_state.backorder_level,
             available_tool_ids=orchestration_input.candidate_tool_ids,
-            max_tool_steps=min(
-                self.agent_config.max_tool_steps,
-                orchestration_input.mission.max_tool_steps,
+            max_tool_steps=max(
+                min(
+                    self.agent_config.max_tool_steps,
+                    orchestration_input.mission.max_tool_steps,
+                ),
+                len(orchestration_input.candidate_tool_ids),
             ),
             demand_baseline_value=demand_baseline_value,
             demand_change_from_baseline=_delta_or_none(demand_value, demand_baseline_value),

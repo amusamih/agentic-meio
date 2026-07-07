@@ -1,4 +1,4 @@
-"""Typed lead-time contracts for the first MEIO milestone."""
+"""Typed lead-time contracts for bounded MEIO uncertainty inputs."""
 
 from __future__ import annotations
 

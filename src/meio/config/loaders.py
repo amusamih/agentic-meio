@@ -1,4 +1,4 @@
-"""TOML loaders for the first MEIO milestone configs."""
+"""TOML loaders for MEIO experiment and validation configs."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from meio.config.schemas import (
     AgentConfig,
     BenchmarkConfig,
     CostConfig,
+    ControlledDemandProfileConfig,
+    ControlledDemandStateConfig,
     DEFAULT_RUNTIME_MODE_SET,
     ExperimentConfig,
     PublicBenchmarkEvalConfig,
@@ -94,6 +96,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     document = _load_toml_document(path)
     experiment_table = _require_table(document, "experiment")
     regime_schedule_tables = _optional_list(document, "regime_schedules")
+    controlled_demand_profile = _load_controlled_demand_profile_config(document)
     uncertainty_baselines = _load_uncertainty_baseline_config(document)
 
     agent_path = experiment_table.get("agent_config")
@@ -161,6 +164,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
                 default=["full"],
             )
         ),
+        controlled_demand_profile=controlled_demand_profile,
         uncertainty_baselines=uncertainty_baselines,
         results_dir=Path(_require_string(experiment_table, "results_dir", "experiment")),
     )
@@ -648,6 +652,61 @@ def _load_uncertainty_baseline_config(
     )
 
 
+def _load_controlled_demand_profile_config(
+    document: dict[str, Any],
+) -> ControlledDemandProfileConfig | None:
+    profile_table = document.get("controlled_demand_profile")
+    if profile_table is None:
+        return None
+    if not isinstance(profile_table, dict):
+        raise ValueError("controlled_demand_profile must be a TOML table.")
+    state_tables = profile_table.get("states", [])
+    if not isinstance(state_tables, list):
+        raise ValueError("controlled_demand_profile.states must be a TOML array.")
+    for state_table in state_tables:
+        if not isinstance(state_table, dict):
+            raise ValueError("controlled_demand_profile.states entries must be TOML tables.")
+    return ControlledDemandProfileConfig(
+        profile_type=_require_string(
+            profile_table,
+            "profile_type",
+            "controlled_demand_profile",
+        ),
+        target_mean=_require_number(
+            profile_table,
+            "target_mean",
+            "controlled_demand_profile",
+        ),
+        history_window=_optional_int(
+            profile_table,
+            "history_window",
+            "controlled_demand_profile",
+            default=3,
+        ),
+        states=tuple(
+            ControlledDemandStateConfig(
+                regime_label=_parse_enum(
+                    RegimeLabel,
+                    _require_string(
+                        state_table,
+                        "regime_label",
+                        "controlled_demand_profile.states",
+                    ),
+                    "controlled_demand_profile.states.regime_label",
+                ),
+                values=tuple(
+                    _require_number_list(
+                        state_table,
+                        "values",
+                        "controlled_demand_profile.states",
+                    )
+                ),
+            )
+            for state_table in state_tables
+        ),
+    )
+
+
 def _load_toml_document(path: str | Path) -> dict[str, Any]:
     path = Path(path)
     try:
@@ -798,6 +857,18 @@ def _require_string_list(document: dict[str, Any], key: str, location: str) -> l
         if not isinstance(item, str) or not item.strip():
             raise ValueError(f"{location}.{key} must contain non-empty strings.")
         result.append(item)
+    return result
+
+
+def _require_number_list(document: dict[str, Any], key: str, location: str) -> list[float]:
+    value = document.get(key)
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{location}.{key} must be a non-empty list of numbers.")
+    result: list[float] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise ValueError(f"{location}.{key} must contain numbers.")
+        result.append(float(item))
     return result
 
 

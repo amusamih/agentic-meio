@@ -53,6 +53,7 @@ def test_compute_decision_quality_tracks_regime_accuracy_and_interventions() -> 
             selected_subgoal="request_replan",
             selected_tools=(
                 "regime_diagnosis_tool",
+                "demand_uncertainty_decomposition_tool",
                 "regime_belief_tool",
                 "scenario_candidate_generator_tool",
                 "risk_sensitive_scenario_evaluator_tool",

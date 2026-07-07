@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 class RegimeLabel(StrEnum):
-    """Allowed outer-loop regime labels for the first milestone."""
+    """Allowed outer-loop regime labels for controlled MEIO evaluation."""
 
     NORMAL = "normal"
     DEMAND_REGIME_SHIFT = "demand_regime_shift"

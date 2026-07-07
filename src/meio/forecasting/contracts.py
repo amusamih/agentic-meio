@@ -1,4 +1,4 @@
-"""Typed forecasting contracts for the first MEIO milestone."""
+"""Typed forecasting contracts for bounded MEIO uncertainty inputs."""
 
 from __future__ import annotations
 

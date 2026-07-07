@@ -91,11 +91,10 @@ def default_validation_run_dirs(results_root: str | Path = "results") -> tuple[P
 
     root = Path(results_root)
     candidates = (
-        root / "stockpyl_serial_paper_candidate",
-        root / "stockpyl_serial_heldout_eval",
-        root / "stockpyl_serial_frozen_broad_eval",
-        root / "public_benchmark_eval",
-        root / "real_demand_backtest",
+        root / "stockpyl_serial_realistic_comparison",
+        root / "stockpyl_serial_spread_sensitivity",
+        root / "public_benchmark_realistic_comparison",
+        root / "real_demand_backtest_panel_realistic_comparison",
     )
     run_dirs = tuple(
         run_dir

@@ -1,4 +1,4 @@
-"""Typed optimization contracts for the first MEIO milestone."""
+"""Typed optimization contracts for the trusted downstream decision boundary."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ class OptimizationStatus(StrEnum):
 class OptimizationRequest:
     """Typed optimizer input.
 
-    This boundary is the only place in the first milestone architecture that is
+    This boundary is the only place in the current architecture that is
     allowed to request replenishment decisions from a trusted solver or policy.
     """
 
@@ -104,7 +104,7 @@ class OptimizationRequest:
 class OptimizationResult:
     """Typed optimizer output carrying replenishment decisions.
 
-    This is the only bounded interface in the first milestone allowed to carry
+    This is the only bounded interface in the current architecture allowed to carry
     raw replenishment-order decisions.
     """
 

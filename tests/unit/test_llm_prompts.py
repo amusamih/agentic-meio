@@ -28,7 +28,7 @@ def test_build_system_prompt_keeps_optimizer_boundary_explicit() -> None:
 
     assert "optimizer is the sole order-producing boundary" in prompt.lower()
     assert "never emit replenishment orders" in prompt.lower()
-    assert "regret-guarded scenario-planning tools" in prompt
+    assert "scenario-planning tools" in prompt
 
 
 def test_build_prompt_messages_include_current_context_and_tool_sequence() -> None:
@@ -100,14 +100,43 @@ def test_prompt_includes_recovery_regret_guard_cues() -> None:
     assert "- total_pipeline: 146.4" in messages[1].content
     assert "- backorder_ratio_to_baseline: 6.05" in messages[1].content
     assert "- recovery_with_high_backorder_load: true" in messages[1].content
-    assert "regret guard should prevent over-correction" in messages[1].content
+    assert "cautious scenario planning" in messages[1].content
     assert '"update_request_types":["reweight_scenarios"]' in messages[1].content
+
+
+def test_prompt_examples_follow_reduced_available_tool_sequence() -> None:
+    reduced_sequence = (
+        "regime_diagnosis_tool",
+        "regime_belief_tool",
+        "scenario_candidate_generator_tool",
+        "risk_sensitive_scenario_evaluator_tool",
+        "counterfactual_regret_guard_tool",
+    )
+    context = LLMClientContext(
+        benchmark_id="serial_3_echelon",
+        mission_id="test_mission",
+        time_index=1,
+        regime_label=RegimeLabel.DEMAND_REGIME_SHIFT,
+        demand_value=14.0,
+        leadtime_value=2.0,
+        inventory_level=(20.0, 30.0, 40.0),
+        backorder_level=(1.0, 0.0, 0.0),
+        available_tool_ids=reduced_sequence,
+        max_tool_steps=5,
+        demand_baseline_value=10.0,
+        demand_ratio_to_baseline=1.4,
+    )
+
+    messages = build_prompt_messages(context, _tool_specs())
+
+    assert "demand_uncertainty_decomposition_tool" not in messages[1].content
+    assert '"candidate_tool_ids":["regime_diagnosis_tool","regime_belief_tool","scenario_candidate_generator_tool","risk_sensitive_scenario_evaluator_tool","counterfactual_regret_guard_tool"]' in messages[1].content
 
 
 def test_prompt_contract_metadata_is_stable_and_versioned() -> None:
     first_hash = prompt_contract_hash()
     second_hash = prompt_contract_hash()
 
-    assert PROMPT_VERSION == "meio.llm_orchestrator.v14"
+    assert PROMPT_VERSION == "meio.llm_orchestrator.v16"
     assert first_hash == second_hash
     assert len(first_hash) == 64

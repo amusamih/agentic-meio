@@ -21,7 +21,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("configs/experiment/real_demand_backtest.toml"),
+        default=Path("configs/experiment/real_demand_backtest_panel_realistic_comparison.toml"),
         help="Path to the real-demand backtest config.",
     )
     parser.add_argument(

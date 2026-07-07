@@ -11,8 +11,8 @@ from meio.evaluation.validation_comparison import summarize_validation_stack
 def test_summarize_validation_stack_reads_internal_and_public_lane_artifacts(
 ) -> None:
     tmp_path = Path(".tmp_validation_comparison_tests") / uuid4().hex
-    internal_dir = tmp_path / "results" / "stockpyl_serial_paper_candidate" / "run_a"
-    public_dir = tmp_path / "results" / "public_benchmark_eval" / "run_b"
+    internal_dir = tmp_path / "results" / "stockpyl_serial_realistic_comparison" / "run_a"
+    public_dir = tmp_path / "results" / "public_benchmark_realistic_comparison" / "run_b"
     try:
         internal_dir.mkdir(parents=True)
         public_dir.mkdir(parents=True)
@@ -21,7 +21,7 @@ def test_summarize_validation_stack_reads_internal_and_public_lane_artifacts(
             internal_dir / "run_manifest.json",
             {
                 "run_group_id": "run_a",
-                "experiment_id": "paper_candidate",
+                "experiment_id": "stockpyl_serial_realistic_comparison",
                 "benchmark_id": "serial_3_echelon",
                 "benchmark_source": "stockpyl_serial",
             },
@@ -29,7 +29,7 @@ def test_summarize_validation_stack_reads_internal_and_public_lane_artifacts(
         write_json(
             internal_dir / "experiment_metadata.json",
             {
-                "experiment_id": "paper_candidate",
+                "experiment_id": "stockpyl_serial_realistic_comparison",
                 "benchmark_source": "stockpyl_serial",
                 "validation_lane": "stockpyl_internal",
                 "artifact_use_class": "paper_candidate",
@@ -56,7 +56,7 @@ def test_summarize_validation_stack_reads_internal_and_public_lane_artifacts(
             public_dir / "run_manifest.json",
             {
                 "run_group_id": "run_b",
-                "experiment_id": "public_benchmark_eval",
+                "experiment_id": "public_benchmark_realistic_comparison",
                 "benchmark_id": "replenishment_env",
                 "benchmark_source": "public_benchmark",
             },
@@ -64,7 +64,7 @@ def test_summarize_validation_stack_reads_internal_and_public_lane_artifacts(
         write_json(
             public_dir / "experiment_metadata.json",
             {
-                "experiment_id": "public_benchmark_eval",
+                "experiment_id": "public_benchmark_realistic_comparison",
                 "benchmark_source": "public_benchmark",
                 "validation_lane": "public_benchmark",
                 "artifact_use_class": "internal_only",
@@ -95,14 +95,14 @@ def test_summarize_validation_stack_reads_internal_and_public_lane_artifacts(
 
 def test_summarize_validation_stack_reads_completed_public_benchmark_rewards() -> None:
     tmp_path = Path(".tmp_validation_comparison_tests") / uuid4().hex
-    public_dir = tmp_path / "results" / "public_benchmark_eval" / "run_c"
+    public_dir = tmp_path / "results" / "public_benchmark_realistic_comparison" / "run_c"
     try:
         public_dir.mkdir(parents=True)
         write_json(
             public_dir / "run_manifest.json",
             {
                 "run_group_id": "run_c",
-                "experiment_id": "public_benchmark_eval",
+                "experiment_id": "public_benchmark_realistic_comparison",
                 "benchmark_id": "replenishment_env:sku50.single_store.standard",
                 "benchmark_source": "public_benchmark",
             },
@@ -110,7 +110,7 @@ def test_summarize_validation_stack_reads_completed_public_benchmark_rewards() -
         write_json(
             public_dir / "experiment_metadata.json",
             {
-                "experiment_id": "public_benchmark_eval",
+                "experiment_id": "public_benchmark_realistic_comparison",
                 "benchmark_source": "public_benchmark",
                 "validation_lane": "public_benchmark",
                 "artifact_use_class": "internal_only",

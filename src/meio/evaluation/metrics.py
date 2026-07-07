@@ -1,4 +1,4 @@
-"""Metric identifiers for the first MEIO milestone."""
+"""Metric identifiers for MEIO validation runs."""
 
 from __future__ import annotations
 

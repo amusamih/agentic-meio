@@ -51,6 +51,7 @@ REQUIRED_TOOL_SEQUENCE_HANDOFFS = frozenset(
     {
         (
             "regime_diagnosis_tool",
+            "demand_uncertainty_decomposition_tool",
             "regime_belief_tool",
             "scenario_candidate_generator_tool",
             "risk_sensitive_scenario_evaluator_tool",
@@ -67,6 +68,7 @@ TERMINAL_SCENARIO_INPUT_TOOL_IDS = frozenset(
 
 REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_SEQUENCE = (
     "regime_diagnosis_tool",
+    "demand_uncertainty_decomposition_tool",
     "regime_belief_tool",
     "scenario_candidate_generator_tool",
     "risk_sensitive_scenario_evaluator_tool",
@@ -423,6 +425,8 @@ class OrchestrationRuntime:
             queue = self._seed_tool_queue(subgoal, request.candidate_tool_ids)
             allow_implicit_follow_on = not bool(request.candidate_tool_ids)
         max_steps = min(self._agent_config.max_tool_steps, request.mission.max_tool_steps)
+        if request.candidate_tool_ids and tuple(queue) == request.candidate_tool_ids:
+            max_steps = max(max_steps, len(queue))
         if tuple(queue) == REGRET_GUARDED_RISK_SENSITIVE_SCENARIO_PLANNER_TOOL_SEQUENCE:
             max_steps = max(max_steps, len(tuple(queue)))
         admissibility_checks: list[AdmissibilityCheck] = []
